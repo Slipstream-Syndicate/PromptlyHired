@@ -1,0 +1,14 @@
+* text=auto eol=lf
+
+# Shell scripts and the Dockerfile MUST keep LF endings: a CRLF shebang makes
+# Linux report "bad interpreter" and the container fails to start.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+
+# Binary assets must never be line-ending converted.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
