@@ -86,7 +86,6 @@ jobs:
         run: |
           test -f dist/sw.js || { echo "sw.js missing - PWA would not install"; exit 1; }
           test -f dist/manifest.webmanifest || { echo "manifest missing"; exit 1; }
-          grep -q "push-sw.js" dist/sw.js || { echo "push handler not imported"; exit 1; }
 
   spec-audit:
     name: CLAUDE.md compliance

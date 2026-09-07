@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import JobCard from '../components/JobCard.jsx'
 
@@ -8,15 +9,11 @@ export default function SavedJobs() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    ;(async () => {
-      try {
-        setRows(await api.listSaved())
-      } catch (err) {
-        setError(err.message)
-      } finally {
-        setBusy(false)
-      }
-    })()
+    api
+      .listSaved()
+      .then(setRows)
+      .catch((err) => setError(err.message))
+      .finally(() => setBusy(false))
   }, [])
 
   const unsave = async (job) => {
@@ -26,34 +23,6 @@ export default function SavedJobs() {
       await api.unsaveJob(job.id)
     } catch (err) {
       setRows(previous)
-      setError(err.message)
-    }
-  }
-
-  const toggleFollow = async (job) => {
-    const next = !job.is_company_followed
-    setRows((r) =>
-      r.map((row) =>
-        row.job.company.id === job.company.id
-          ? { ...row, job: { ...row.job, is_company_followed: next } }
-          : row,
-      ),
-    )
-    try {
-      await (next
-        ? api.followCompany(job.company.id)
-        : api.unfollowCompany(job.company.id))
-    } catch (err) {
-      setError(err.message)
-    }
-  }
-
-  // Applying moves the job off the shortlist and onto the Applications page.
-  const markApplied = async (job) => {
-    try {
-      await api.createApplication({ job_id: job.id })
-      setRows((r) => r.filter((row) => row.job.id !== job.id))
-    } catch (err) {
       setError(err.message)
     }
   }
@@ -72,17 +41,12 @@ export default function SavedJobs() {
         <div className="empty">
           <h2>Nothing saved yet</h2>
           <p>Tap the heart on any listing to shortlist it here.</p>
+          <Link className="btn primary" to="/">Browse jobs</Link>
         </div>
       )}
 
       {rows.map((row) => (
-        <JobCard
-          key={row.job.id}
-          job={row.job}
-          onToggleSave={unsave}
-          onToggleFollow={toggleFollow}
-          onApplied={markApplied}
-        />
+        <JobCard key={row.job.id} job={row.job} onToggleSave={unsave} />
       ))}
     </main>
   )

@@ -161,38 +161,38 @@ export const api = {
   },
   me: () => request('/api/auth/me'),
 
+  // --- Jobs ---
   searchJobs: (params) => request(`/api/jobs/search${qs(params)}`),
   getJob: (id) => request(`/api/jobs/${id}`),
+  // Costs an API call, so it is an explicit POST rather than part of GET.
+  analyzeMatch: (id, refresh = false) =>
+    request(`/api/jobs/${id}/match${refresh ? '?refresh=true' : ''}`, { method: 'POST' }),
 
   listSaved: () => request('/api/saved'),
   saveJob: (jobId) => request(`/api/saved/${jobId}`, { method: 'POST' }),
   unsaveJob: (jobId) => request(`/api/saved/${jobId}`, { method: 'DELETE' }),
 
-  listFollows: () => request('/api/follows'),
-  followCompany: (companyId) => request(`/api/follows/${companyId}`, { method: 'POST' }),
-  unfollowCompany: (companyId) => request(`/api/follows/${companyId}`, { method: 'DELETE' }),
+  // --- Resume + skill profile ---
+  getActiveResume: () => request('/api/resumes/active'),
+  listResumes: () => request('/api/resumes'),
+  uploadResume: (file) => upload('/api/resumes', file),
+  reanalyzeResume: (id) => request(`/api/resumes/${id}/analyze`, { method: 'POST' }),
+  updateSkillProfile: (id, payload) =>
+    request(`/api/resumes/${id}/skill-profile`, { method: 'PATCH', body: payload }),
 
-  listApplications: () => request('/api/applications'),
-  createApplication: (payload) =>
-    request('/api/applications', { method: 'POST', body: payload }),
-  updateApplication: (id, payload) =>
-    request(`/api/applications/${id}`, { method: 'PATCH', body: payload }),
-  deleteApplication: (id) => request(`/api/applications/${id}`, { method: 'DELETE' }),
+  // --- Documents + history ---
+  generateDocument: (jobId, payload) =>
+    request(`/api/jobs/${jobId}/documents`, { method: 'POST', body: payload }),
+  getDocument: (id) => request(`/api/documents/${id}`),
+  updateDocument: (id, edited_content) =>
+    request(`/api/documents/${id}`, { method: 'PATCH', body: { edited_content } }),
+  resetDocument: (id) => request(`/api/documents/${id}/reset`, { method: 'POST' }),
+  deleteDocument: (id) => request(`/api/documents/${id}`, { method: 'DELETE' }),
+  history: () => request('/api/history'),
 
+  // --- Profile ---
   getProfile: () => request('/api/profile'),
+  updateProfile: (payload) => request('/api/profile', { method: 'PATCH', body: payload }),
   uploadProfilePicture: (file) => upload('/api/profile/picture', file),
   removeProfilePicture: () => request('/api/profile/picture', { method: 'DELETE' }),
-  updateProfile: (payload) => request('/api/profile', { method: 'PATCH', body: payload }),
-  getPreferences: () => request('/api/profile/preferences'),
-  savePreferences: (payload) =>
-    request('/api/profile/preferences', { method: 'PUT', body: payload }),
-
-  analyticsFunnel: () => request('/api/analytics/funnel'),
-
-  pushConfig: () => request('/api/push/config'),
-  pushSubscribe: (subscription) =>
-    request('/api/push/subscribe', { method: 'POST', body: subscription }),
-  pushUnsubscribe: (subscription) =>
-    request('/api/push/unsubscribe', { method: 'POST', body: subscription }),
-  pushTest: () => request('/api/push/test', { method: 'POST' }),
 }

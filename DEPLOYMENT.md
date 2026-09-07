@@ -33,20 +33,18 @@ Run these locally and keep the output somewhere safe; you'll paste them in later
 ```bash
 # JWT signing key
 python -c "import secrets; print(secrets.token_urlsafe(64))"
-
-# Web push keypair (VAPID)
-cd backend && .venv/Scripts/python.exe -m app.tools.vapid
 ```
 
-> Regenerating VAPID keys later invalidates every existing push subscription, so
-> generate once and keep them.
+You also need an **Anthropic API key** from
+[console.anthropic.com](https://console.anthropic.com). Without it there is no
+skill extraction, no matching and no document generation — the whole product.
 
 ---
 
 ## 2. Deploy the API to Render
 
 1. Render → **New** → **Blueprint** → select your repo. It reads `render.yaml` and
-   proposes a web service, a Postgres database, and two cron jobs.
+   proposes a web service and a Postgres database.
 2. Click **Apply**. The database and `JWT_SECRET` are created automatically.
 3. The first deploy will **fail its health check** — that is expected, because
    `CORS_ORIGINS` and `APP_BASE_URL` are not set yet. Continue to step 3, then
@@ -85,11 +83,7 @@ Back in Render → your web service → **Environment**:
 | `APP_BASE_URL` | `https://jobtrail.netlify.app` |
 | `JOB_COUNTRY` | `uk` (or `us`, `de`, …) |
 | `RAPIDAPI_KEY` | your JSearch key |
-| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | from step 1 |
-| `VAPID_SUBJECT` | `mailto:you@example.com` |
-
-Set the same values on **both cron jobs** (they send the emails, so they need
-`APP_BASE_URL` for the links).
+| `ANTHROPIC_API_KEY` | your Anthropic key |
 
 The API **refuses to start** in production if `JWT_SECRET` is a default/short
 value, if `CORS_ORIGINS` is missing, wildcarded, or non-HTTPS. That is deliberate —
@@ -97,39 +91,27 @@ a misconfigured deploy should fail immediately, not leak.
 
 ---
 
-## 5. Email — required for notifications to actually work
+## 5. Set a spending expectation
 
-Until `SMTP_HOST` is set, digests and reminders are **written to the log instead of
-being sent**. Email is the baseline channel, so this is not optional if you want
-notifications at all.
+Claude Opus 5 costs $5/$25 per million tokens. In practice: ~$0.05 per resume
+upload, ~$0.03 per job match, ~$0.08 per generated document. A session where
+someone opens ten jobs and generates twice runs about **50 cents**.
 
-Any SMTP provider works. Free options include Resend, Brevo, Mailjet, or a Gmail
-App Password. Set on the web service **and both cron jobs**:
+That is fine for personal use and expensive as a free public product. Before
+sharing the URL widely, either keep it private or add a per-user cap — the
+`AI_CALLS_PER_HOUR` limit (default 60) is a blunt backstop, not a budget.
 
-| Key | Example |
-| --- | --- |
-| `SMTP_HOST` | `smtp.resend.com` |
-| `SMTP_PORT` | `587` |
-| `SMTP_USER` | `resend` |
-| `SMTP_PASSWORD` | your API key |
-| `SMTP_FROM` | `JobTrail <no-reply@yourdomain.com>` |
-
-Most providers require a verified sender domain before they will deliver to
-arbitrary inboxes — do that in their dashboard.
-
-Verify with:
-
-```bash
-curl https://<your-api>.onrender.com/health
-# "email_notifications": true
-```
+Watch real usage in the Anthropic console, and check the API logs for
+`Claude match-analysis: input=... cached_read=...`. If `cached_read` is 0 across
+repeated calls, prompt caching has broken and every match is paying full price
+for the same resume tokens.
 
 ---
 
-## 6. Profile pictures — Cloudflare R2
+## 6. Resumes and profile pictures — Cloudflare R2
 
 `MEDIA_STORAGE=local` writes to the container filesystem, which Render **wipes on
-every deploy**. Uploads would vanish. `render.yaml` already sets `MEDIA_STORAGE=s3`;
+every deploy** — users' uploaded resumes would vanish. `render.yaml` already sets `MEDIA_STORAGE=s3`;
 supply the bucket:
 
 1. Cloudflare dashboard → **R2** → create a bucket, e.g. `jobtrail-media`.
@@ -167,12 +149,10 @@ service **Shell** tab and run:
 ```bash
 python -m app.tasks doctor
 
-# Once SMTP is configured, prove delivery end to end:
-python -m app.tasks doctor --email you@example.com
 ```
 
-It round-trips a real object through R2, makes a real JSearch call, validates the
-VAPID keypair, and reports any failure with the exact variable to fix.
+It round-trips a real object through R2, makes a real JSearch call, makes a real
+(tiny) Claude call, and reports any failure with the exact variable to fix.
 
 You can also check from anywhere with:
 
@@ -187,22 +167,19 @@ Every flag should be `true` for the features you configured:
   "status": "ok",
   "env": "production",
   "live_job_listings": true,
-  "email_notifications": true,
-  "web_push": true,
+  "ai_features": true,
   "durable_media_storage": true
 }
 ```
 
 Then, in a browser:
 
-1. Open the Netlify URL, sign up, and confirm real listings load.
-2. **Android/Chrome:** an install prompt appears → install → Profile → *Enable push
-   notifications* → **Send test**.
-3. **iPhone:** Safari → Share → **Add to Home Screen**, then open it from the home
-   screen. Push only works from the installed app, on iOS 16.4+ — in a normal Safari
-   tab the button correctly tells you to install first.
-4. Hard-refresh on `/applications` — it must load, not 404. (That is the SPA
-   redirect; if it 404s, `netlify.toml` was not picked up.)
+1. Open the Netlify URL and sign up.
+2. Upload a resume on **Profile** and confirm a skill profile appears.
+3. Return to **Jobs** — the feed should populate with no keywords typed.
+4. Open a job, hit **Analyse my match**, then generate a document and export it.
+5. Hard-refresh on `/history` — it must load, not 404. (That is the SPA redirect;
+   if it 404s, `netlify.toml` was not picked up.)
 
 ---
 
@@ -212,9 +189,9 @@ Then, in a browser:
   afterwards takes 30–60s. Not a bug.
 - **Render free Postgres expires after 30 days.** Back up or upgrade before then,
   or you lose the database.
-- **JSearch free tier is ~200 calls/month.** The weekly digest costs one call per
-  followed company (capped by `DIGEST_MAX_COMPANIES`, default 5). Keep the cron
-  weekly — daily would exhaust the quota in about nine days.
+- **JSearch free tier is ~200 calls/month.** One feed search is one call; identical
+  searches within `JSEARCH_CACHE_TTL_MINUTES` are free.
+- **Anthropic is billed per token, with no free tier.** See step 5.
 
 ## Troubleshooting
 
@@ -224,6 +201,6 @@ Then, in a browser:
 | CORS errors in the console | `CORS_ORIGINS` on Render doesn't exactly match the Netlify origin (scheme included). |
 | API won't boot, logs say `CONFIG ERROR` | Intentional. The message names the exact variable to fix. |
 | `sqlalchemy.exc.NoSuchModuleError: postgres` | Shouldn't happen — `config.py` rewrites `postgres://`. If you see it, `DATABASE_URL` was overridden with something unusual. |
-| Emails never arrive | `SMTP_HOST` unset (check `/health`), or the sender domain isn't verified with your provider. |
-| Push works on Android, not iPhone | Expected unless the PWA was added to the home screen and iOS is 16.4+. |
-| Profile pictures vanish after a deploy | `MEDIA_STORAGE` is not `s3`. See step 6. |
+| No skill profile after upload | `ANTHROPIC_API_KEY` unset or invalid — check `/health` and run the doctor. |
+| Match/generate return 503 | Same cause: no Anthropic key configured on the API service. |
+| Resumes vanish after a deploy | `MEDIA_STORAGE` is not `s3`. See step 6. |

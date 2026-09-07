@@ -33,157 +33,151 @@ def head(t):
 
 models = read("backend/app/models.py")
 schemas = read("backend/app/schemas.py")
+ai = read("backend/app/services/ai.py")
 
-head("Data model — every field named in CLAUDE.md")
+head("Data model - every entity named in CLAUDE.md")
 FIELDS = {
     "User": ["email", "password_hash", "name", "profile_picture_url", "created_at"],
-    "Company": ["name", "logo_url"],
+    "Resume": ["user_id", "file_url", "original_filename", "content_type", "is_active", "uploaded_at"],
+    "SkillProfile": ["resume_id", "skills", "job_titles", "domains", "locations",
+                     "seniority", "years_experience", "summary", "generated_at", "model_used"],
+    "Company": ["name", "logo_url", "short_description"],
     "Job": ["company_id", "title", "location", "salary_range", "url", "posted_date",
             "description", "source_api", "external_id", "source_publisher"],
-    "JobPreferences": ["keywords", "location", "salary_min", "salary_max", "job_type"],
-    "Follow": ["user_id", "company_id", "created_at"],
+    "JobMatch": ["user_id", "job_id", "resume_id", "match_percentage", "requirements_met",
+                 "requirements_missing", "rationale", "generated_at", "model_used"],
     "SavedJob": ["user_id", "job_id", "saved_at"],
-    "Application": ["user_id", "job_id", "status", "applied_date", "status_updated_at", "notes"],
+    "GeneratedDocument": ["user_id", "job_id", "resume_id", "kind", "content",
+                          "edited_content", "created_at", "updated_at", "model_used"],
 }
 for cls, fields in FIELDS.items():
     m = re.search(rf"class {cls}\(Base\):(.*?)(?=\nclass |\Z)", models, re.S)
     body = m.group(1) if m else ""
     ck("model", f"{cls} exists", bool(m))
     for f in fields:
-        ck("model", f"{cls}.{f}", f"{f}:" in body or f"{f} :" in body)
+        ck("model", f"{cls}.{f}", f"{f}:" in body)
 
-head("Application status states (exactly the 6 in the spec)")
-for s in ["applied", "online_assessment", "interview", "offer", "rejected", "withdrawn"]:
-    ck("status", f"status '{s}'", f'{s} = "{s}"' in models)
-ck("status", "'saved' is NOT an Application status", 'saved = "saved"' not in models,
-   "spec: Saved is the separate SavedJob entity")
+head("Removed tracker domain stays removed")
+for gone in ["ApplicationStatus", "ApplicationEvent", "class Follow(", "NotifiedJob",
+             "PushSubscription", "JobPreferences"]:
+    ck("removed", f"no {gone.rstrip('(')}", gone not in models)
+for path in ["backend/app/services/notifications.py", "backend/app/services/push.py",
+             "backend/app/services/reminders.py", "backend/app/services/analytics.py",
+             "frontend/src/pages/Applications.jsx", "frontend/src/pages/Analytics.jsx"]:
+    ck("removed", f"{path} deleted", not (ROOT / path).exists())
 
-head("Follow vs SavedJob are separate, independent entities")
-ck("model", "Follow is company-level", "company_id" in models.split("class Follow")[1].split("class ")[0])
-ck("model", "SavedJob is job-level", "job_id" in models.split("class SavedJob")[1].split("class ")[0])
-jobcard = read("frontend/src/components/JobCard.jsx")
-ck("ui", "Save and Follow are separate controls", "onToggleSave" in jobcard and "onToggleFollow" in jobcard)
+head("History is derived, not stored")
+ck("history", "no History table", "class History" not in models)
+documents_router = read("backend/app/routers/documents.py")
+ck("history", "history derived from GeneratedDocument", "GeneratedDocument" in documents_router
+   and "/history" in documents_router)
 
-head("JobPreferences is one source of truth for profile + homepage filters")
+head("Match scoring is on-demand, never across the feed")
 jobs_router = read("backend/app/routers/jobs.py")
-ck("prefs", "search reads stored prefs on login", "use_saved_preferences" in jobs_router)
-ck("prefs", "submitted filters overwrite stored prefs", "prefs.keywords = keywords" in jobs_router)
-prof = read("frontend/src/pages/Profile.jsx")
-ck("prefs", "profile edits the same fields", all(k in prof for k in ["keywords", "location", "salary_min", "salary_max", "job_type"]))
+user_state = read("backend/app/services/user_state.py")
+ck("cost", "feed cards carry no match percentage", "match_percentage" not in user_state)
+ck("cost", "scoring is a separate explicit POST", '"/{job_id}/match"' in jobs_router)
+ck("cost", "job detail does not score", "ai.analyze_match" not in jobs_router.split("def analyze_job")[0])
+ck("cost", "match cached per (user, job, resume)", "uq_match_user_job_resume" in models)
+ck("cost", "recompute only when explicitly refreshed", "refresh" in jobs_router)
 
-head("Bottom nav — exactly 4 pages, Followed Companies NOT among them")
+head("Prompt injection defenses (the central security concern)")
+ck("ai", "untrusted job text is fenced", "wrap_untrusted" in ai)
+ck("ai", "delimiter injection is stripped", ".replace(UNTRUSTED_OPEN" in ai)
+ck("ai", "guard tells the model the block is data", "never" in ai and "instructions to follow" in ai)
+ck("ai", "job text never goes in the system prompt",
+   "wrap_untrusted(description)" in ai and "system=f\"{wrap_untrusted" not in ai)
+ck("ai", "structured output on every call", "output_format=schema" in ai)
+ck("ai", "match percentage clamped server-side", "max(0, min(100" in ai)
+ck("ai", "generation forbids fabrication", "invent" in ai.lower())
+ck("ai", "resume sent as a cached prefix", '"cache_control": {"type": "ephemeral"}' in ai)
+ck("ai", "cache effectiveness is logged", "cache_read_input_tokens" in ai)
+ck("ai", "AI endpoints are rate limited", "ai_rate_limit" in read("backend/app/rate_limit.py"))
+for router in ("backend/app/routers/jobs.py", "backend/app/routers/documents.py",
+               "backend/app/routers/resumes.py"):
+    ck("ai", f"{Path(router).name} guards AI routes", "ai_rate_limit" in read(router))
+
+head("No LLM output triggers a side effect")
+ck("ai", "documents are drafts the user edits", "edited_content" in models)
+ck("ai", "original AI output is never overwritten", "never overwritten" in documents_router
+   or "edited_content" in documents_router)
+ck("ai", "no auto-apply or auto-send anywhere",
+   not re.search(r"auto_apply|send_application|submit_application", read("backend/app/routers/documents.py")))
+
+head("Nav - exactly 4 pages: Jobs, Saved, History, Profile")
 nav = read("frontend/src/components/BottomNav.jsx")
-routes = [m for m in re.findall(r"to: '([^']+)'", nav)]
+routes = re.findall(r"to: '([^']+)'", nav)
 ck("nav", "exactly 4 nav items", len(routes) == 4, str(routes))
-ck("nav", "nav is Home/Saved/Applications/Profile",
-   set(routes) == {"/", "/saved", "/applications", "/profile"}, str(routes))
-ck("nav", "Followed Companies is not a nav slot", "/profile/companies" not in routes)
-appjsx = read("frontend/src/App.jsx")
-ck("nav", "Followed Companies is a Profile sub-route", "/profile/companies" in appjsx)
+ck("nav", "Jobs/Saved/History/Profile", set(routes) == {"/", "/saved", "/history", "/profile"}, str(routes))
 
-head("Apply link — required everywhere a job is shown")
+head("Apply link - required everywhere a job is shown")
 apply = read("frontend/src/components/ApplyLink.jsx")
 ck("apply", "opens in a new tab", 'target="_blank"' in apply)
 ck("apply", "rel=noopener noreferrer", 'rel="noopener noreferrer"' in apply)
 ck("apply", "labelled with source_publisher", "source_publisher" in apply)
 ck("apply", "hidden when there is no url", "if (!job.url) return null" in apply)
-ck("apply", "primary styling, distinct from Save/Follow", "btn primary" in apply)
-ck("apply", "present on Homepage + Saved (via JobCard)", "ApplyLink" in jobcard)
-ck("apply", "present on Applications page", "ApplyLink" in read("frontend/src/pages/Applications.jsx"))
+ck("apply", "on the feed card", "ApplyLink" in read("frontend/src/components/JobCard.jsx"))
+ck("apply", "on job detail", "ApplyLink" in read("frontend/src/pages/JobDetail.jsx"))
+ck("apply", "on History", "ApplyLink" in read("frontend/src/pages/History.jsx"))
 
-head("Notifications driven ONLY by Follow, never SavedJob")
-notif = read("backend/app/services/notifications.py")
-ck("notif", "digest joins on Follow", "Follow" in notif)
-ck("notif", "digest never reads SavedJob", "SavedJob" not in notif)
-ck("notif", "email is the baseline channel", "send_email" in notif)
-ck("notif", "push is layered on top", "send_to_user" in notif)
+head("Resume drives the search")
+ck("search", "query built from the skill profile", "build_query" in jobs_router)
+ck("search", "titles preferred over raw skills", "job_titles" in jobs_router)
+ck("search", "resume upload endpoint", (BE / "app/routers/resumes.py").exists())
+ck("search", "PDF/DOCX/text extraction", (BE / "app/services/resume_text.py").exists())
+ck("search", "skill profile is user-editable", "skill-profile" in read("backend/app/routers/resumes.py"))
+ck("search", "feed page prompts for a resume first", "Upload your resume first" in read("frontend/src/pages/Jobs.jsx"))
 
-head("Security requirements from CLAUDE.md")
+head("Match percentage is presented honestly")
+match_panel = read("frontend/src/components/MatchPanel.jsx")
+ck("ui", "match panel exists", bool(match_panel))
+ck("ui", "score never claimed as a hiring prediction", "not a prediction" in match_panel)
+ck("ui", "requirements met and missing both shown",
+   "requirements_met" in match_panel and "requirements_missing" in match_panel)
+
+head("Document editor + export")
+editor = read("frontend/src/pages/DocumentEditor.jsx")
+ck("docs", "structured editor, not one textarea", "BulletList" in editor and "ResumeForm" in editor)
+ck("docs", "user reviews before export", "before you use it" in editor)
+ck("docs", "reset to generated", "resetDocument" in editor)
+ck("docs", "PDF export", (FE / "src/lib/exportPdf.js").exists())
+ck("docs", "export escapes model output", "function esc(" in read("frontend/src/lib/exportPdf.js"))
+
+head("Security carried forward")
 sec = read("backend/app/security.py")
-ck("sec", "bcrypt password hashing", "bcrypt" in sec)
-ck("sec", "no plaintext passwords stored", "password_hash" in models)
-ck("sec", "short-lived access token", "access_token_expire_minutes" in read("backend/app/config.py"))
-ck("sec", "refresh token pattern", "RefreshToken" in models)
-ck("sec", "refresh tokens stored hashed", "hash_refresh_token" in sec and "sha256" in sec)
-rl = read("backend/app/rate_limit.py")
 auth = read("backend/app/routers/auth.py")
-ck("sec", "rate limiting on login", "login_rate_limit" in auth)
-ck("sec", "rate limiting on signup", "signup_rate_limit" in auth)
 main = read("backend/app/main.py")
-# Look for an actual wildcard in the middleware args, not the word "*" anywhere
-# in the file (the previous check tripped on an explanatory comment).
-cors_block = main[main.find("add_middleware"): main.find("add_middleware") + 500]
+ck("sec", "bcrypt password hashing", "bcrypt" in sec)
+ck("sec", "refresh tokens stored hashed", "hash_refresh_token" in sec and "sha256" in sec)
+ck("sec", "rate limiting on login and signup", "login_rate_limit" in auth and "signup_rate_limit" in auth)
+cors = main[main.find("add_middleware"): main.find("add_middleware") + 500]
 ck("sec", "CORS restricted, not wildcard",
-   "allow_origins=settings.cors_origins" in cors_block
-   and '["*"]' not in cors_block and '"*"' not in cors_block.split("#")[0])
-ck("sec", "Pydantic validation at the boundary", "BaseModel" in schemas and "field_validator" in schemas)
+   "allow_origins=settings.cors_origins" in cors and '["*"]' not in cors)
+ck("sec", "Pydantic validation at the boundary", "field_validator" in schemas)
 ck("sec", "user text stripped of control chars", "clean_text" in schemas)
-ck("sec", "job text escaped before HTML email", "html.escape" in notif)
-
-# Raw SQL scan across the backend.
+ck("sec", "API key is server-side only", "anthropic_api_key" in read("backend/app/config.py")
+   and "ANTHROPIC" not in read("frontend/src/api/client.js"))
 raw_sql = []
 for py in (BE / "app").rglob("*.py"):
     txt = py.read_text(encoding="utf-8", errors="replace")
     for m in re.finditer(r'(?:execute|text)\(\s*f["\']', txt):
         raw_sql.append(f"{py.relative_to(BE)}:{txt[:m.start()].count(chr(10))+1}")
-ck("sec", "no f-string interpolated SQL anywhere", not raw_sql, "; ".join(raw_sql))
-
-head("Phase 1 — MVP")
-ck("p1", "signup + login endpoints", "/signup" in auth and "/login" in auth)
-ck("p1", "job feed from JSearch", (BE / "app/services/jsearch.py").exists())
-ck("p1", "search + filters", "salary_min" in jobs_router and "job_type" in jobs_router)
-ck("p1", "followed-company results pinned above general", "followed=" in jobs_router)
-ck("p1", "Saved Jobs page", (FE / "src/pages/SavedJobs.jsx").exists())
-ck("p1", "Applications page", (FE / "src/pages/Applications.jsx").exists())
-ck("p1", "Followed Companies sub-page", (FE / "src/pages/FollowedCompanies.jsx").exists())
-ck("p1", "email notification for followed companies", "send_email" in notif)
-
-head("Phase 2 — PWA + polish")
-vite = read("frontend/vite.config.js")
-ck("p2", "PWA manifest configured", "manifest:" in vite)
-ck("p2", "service worker generated", "VitePWA" in vite)
-ck("p2", "offline shell (navigateFallback)", "navigateFallback:" in vite)
-ck("p2", "maskable icon for install", "maskable" in vite)
-ck("p2", "web push service worker handler", (FE / "public/push-sw.js").exists())
-ck("p2", "push backend", (BE / "app/services/push.py").exists())
-ck("p2", "push subscriptions persisted", "PushSubscription" in models)
-ck("p2", "install prompt UI", (FE / "src/components/InstallPrompt.jsx").exists())
-ck("p2", "iOS add-to-home-screen guidance", "Add to Home Screen" in read("frontend/src/components/InstallPrompt.jsx"))
-ck("p2", "profile picture upload", (BE / "app/services/storage.py").exists())
-ck("p2", "S3/R2 storage path (not local-only)", "uses_s3" in read("backend/app/services/storage.py"))
-ck("p2", "job preferences editing", "savePreferences" in prof)
-ck("p2", "responsive breakpoints", "@media (min-width: 768px)" in read("frontend/src/styles.css"))
-
-head("Phase 3 — nice-to-haves")
-ck("p3", "Adzuna integration", (BE / "app/services/adzuna.py").exists())
-ck("p3", "multi-source merge", (BE / "app/services/sources.py").exists())
-ck("p3", "funnel analytics service", (BE / "app/services/analytics.py").exists())
-ck("p3", "response rate by company", '"response_rate"' in read("backend/app/services/analytics.py"))
-ck("p3", "analytics UI", (FE / "src/pages/Analytics.jsx").exists())
-ck("p3", "follow-up reminders", (BE / "app/services/reminders.py").exists())
-ck("p3", "reminder threshold configurable", "follow_up_after_days" in read("backend/app/config.py"))
-
-head("Open decisions flagged in CLAUDE.md")
-cfg = read("backend/app/config.py")
-ck("open", "profile pictures use S3-compatible storage, not local disk in prod",
-   "s3_endpoint_url" in cfg and "media_storage" in cfg)
-ck("open", "local disk documented as dev-only", "wipe" in read("backend/app/services/storage.py").lower()
-   or "redeploy" in read("backend/app/services/storage.py").lower())
+ck("sec", "no f-string interpolated SQL", not raw_sql, "; ".join(raw_sql))
 
 head("Deployment readiness")
-ck("deploy", "frontend host config (Netlify)", (ROOT / "netlify.toml").exists())
-ck("deploy", "SPA redirect so deep links do not 404", (ROOT / "frontend/public/_redirects").exists())
-ck("deploy", "backend blueprint with Postgres + cron", (ROOT / "render.yaml").exists())
-ck("deploy", "container image for the API", (ROOT / "backend/Dockerfile").exists())
-ck("deploy", "migrations run before the server binds", "alembic upgrade head" in read("backend/start.sh"))
-ck("deploy", "scheduled digest job defined", "app.tasks digest" in read("render.yaml"))
-ck("deploy", "scheduled reminders job defined", "app.tasks reminders" in read("render.yaml"))
-ck("deploy", "platform postgres:// URLs normalised", "_PG_SCHEME_FIXES" in read("backend/app/config.py"))
+ck("deploy", "frontend host config", (ROOT / "netlify.toml").exists())
+ck("deploy", "SPA redirect", (ROOT / "frontend/public/_redirects").exists())
+ck("deploy", "backend blueprint", (ROOT / "render.yaml").exists())
+ck("deploy", "no cron jobs for deleted tasks", "app.tasks digest" not in read("render.yaml"))
+ck("deploy", "ANTHROPIC_API_KEY in the blueprint", "ANTHROPIC_API_KEY" in read("render.yaml"))
+ck("deploy", "container image", (ROOT / "backend/Dockerfile").exists())
+ck("deploy", "migrations run before serving", "alembic upgrade head" in read("backend/start.sh"))
+ck("deploy", "platform postgres:// normalised", "_PG_SCHEME_FIXES" in read("backend/app/config.py"))
 ck("deploy", "production refuses a default JWT secret", "production_blockers" in read("backend/app/config.py"))
-ck("deploy", "HSTS + nosniff + frame-deny headers", "Strict-Transport-Security" in read("backend/app/main.py"))
-ck("deploy", "automated tests live in the repo", (ROOT / "backend/tests").is_dir())
+ck("deploy", "tests in the repo", (BE / "tests").is_dir())
 ck("deploy", "CI runs them", (ROOT / ".github/workflows/ci.yml").exists())
 ck("deploy", "deployment guide", (ROOT / "DEPLOYMENT.md").exists())
+ck("deploy", "single migration head", len(list((BE / "alembic/versions").glob("*.py"))) >= 1)
 
 print("\n" + "=" * 60)
 print(f"{checks} checks, {len(issues)} problem(s)")

@@ -370,48 +370,6 @@ a {
   }
 }
 
-/* --- Status badges ------------------------------------------------------ */
-
-.status {
-  border-radius: 999px;
-  padding: 5px 11px;
-  font-size: 12px;
-  font-weight: 600;
-  border: 1px solid;
-  cursor: pointer;
-  background: transparent;
-}
-
-.status[data-s='applied'] {
-  color: var(--stage-1);
-  border-color: color-mix(in srgb, var(--stage-1) 45%, transparent);
-}
-
-.status[data-s='online_assessment'] {
-  color: var(--stage-2);
-  border-color: color-mix(in srgb, var(--stage-2) 45%, transparent);
-}
-
-.status[data-s='interview'] {
-  color: var(--stage-3);
-  border-color: color-mix(in srgb, var(--stage-3) 45%, transparent);
-}
-
-.status[data-s='offer'] {
-  color: var(--good);
-  border-color: color-mix(in srgb, var(--good) 50%, transparent);
-}
-
-.status[data-s='rejected'] {
-  color: var(--critical);
-  border-color: color-mix(in srgb, var(--critical) 45%, transparent);
-}
-
-.status[data-s='withdrawn'] {
-  color: var(--muted);
-  border-color: var(--border);
-}
-
 /* --- Misc --------------------------------------------------------------- */
 
 .empty {
@@ -601,163 +559,178 @@ a.btn {
   color: var(--accent);
 }
 
-/* --- Phase 3: funnel analytics ------------------------------------------ */
 
-.stat-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
-  margin-bottom: 4px;
-}
+/* --- Resume-driven UI ---------------------------------------------------- */
 
-@media (min-width: 640px) {
-  .stat-grid {
-    grid-template-columns: repeat(4, 1fr);
-  }
-}
-
-.stat {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px;
-}
-
-.stat-value {
-  font-size: 26px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
-}
-
-.stat-suffix {
-  font-size: 14px;
-  font-weight: 600;
+.job-blurb {
   color: var(--muted);
-  margin-left: 2px;
+  font-size: 13px;
+  margin: 6px 0 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.stat-label {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 4px;
+.chip.analysed {
+  color: var(--accent);
+  border-color: rgba(16, 185, 129, 0.35);
+  text-decoration: none;
 }
 
-.stat-hint {
+.fine-print {
   font-size: 11px;
   color: var(--muted);
-  opacity: 0.75;
-  margin-top: 2px;
+  margin: 10px 0 0;
+  line-height: 1.5;
 }
 
-/* Horizontal bars: thin marks, rounded data-end, recessive track. */
-.bars {
-  display: grid;
-  gap: 8px;
-}
-
-.bar-row {
-  display: grid;
-  grid-template-columns: minmax(96px, 34%) 1fr 28px;
-  align-items: center;
-  gap: 10px;
-}
-
-.bar-label {
-  font-size: 12px;
+.job-description {
+  white-space: pre-wrap;
+  font-size: 13px;
   color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-height: 420px;
+  overflow-y: auto;
+  line-height: 1.6;
 }
 
-.bar-track {
-  background: var(--bg);
-  border-radius: 4px;
-  height: 14px;
-  overflow: hidden;
-}
-
-.bar-fill {
-  height: 100%;
-  border-radius: 0 4px 4px 0;
-  background: var(--muted);
-  transition: width 0.25s ease;
-}
-
-.bar-fill[data-s='applied'] { background: var(--stage-1); }
-.bar-fill[data-s='online_assessment'] { background: var(--stage-2); }
-.bar-fill[data-s='interview'] { background: var(--stage-3); }
-.bar-fill[data-s='offer'] { background: var(--good); }
-.bar-fill[data-s='rejected'] { background: var(--critical); }
-.bar-fill[data-s='withdrawn'] { background: var(--muted); }
-
-.bar-value {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  color: var(--text);
-}
-
-/* Weekly bars: 2px surface gap between adjacent fills. */
-.spark {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 84px;
-}
-
-.spark-col {
-  flex: 1;
-  height: 100%;
-  display: flex;
-  align-items: flex-end;
-}
-
-.spark-bar {
-  width: 100%;
-  background: var(--stage-2);
-  border-radius: 3px 3px 0 0;
-  min-height: 2px;
-}
-
-.spark-bar[data-empty='true'] {
-  background: var(--border);
-}
-
-.table-wrap {
-  overflow-x: auto;
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
+.filter-toggle {
   font-size: 13px;
 }
 
-.data-table th {
-  text-align: left;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-  font-weight: 600;
-  padding: 0 10px 8px 0;
-  white-space: nowrap;
+/* --- Match panel --------------------------------------------------------- */
+
+.match-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
 }
 
-.data-table td {
-  padding: 8px 10px 8px 0;
-  border-top: 1px solid var(--border);
+.match-score {
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
 }
 
-.data-table td:first-child {
-  font-variant-numeric: normal;
+.match-pct {
+  font-size: 18px;
+  font-weight: 600;
+  margin-left: 1px;
 }
 
-.follow-up-flag {
-  color: var(--warn);
-  font-size: 12px;
+/* Band colours are a green/amber/red scale, so the number and the text label
+   beside them always carry the same information without relying on hue. */
+.match-score[data-band='strong'],
+.match-band[data-band='strong'] { color: var(--good); }
+.match-score[data-band='partial'],
+.match-band[data-band='partial'] { color: var(--warn); }
+.match-score[data-band='weak'],
+.match-band[data-band='weak'] { color: var(--critical); }
+
+.match-band {
+  font-size: 13px;
   font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.meter {
+  background: var(--bg);
+  border-radius: 4px;
+  height: 10px;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+  transition: width 0.3s ease;
+}
+
+.meter-fill[data-band='strong'] { background: var(--good); }
+.meter-fill[data-band='partial'] { background: var(--warn); }
+.meter-fill[data-band='weak'] { background: var(--critical); }
+
+.req-block { margin-top: 16px; }
+
+.req-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.req-title[data-tone='met'] { color: var(--good); }
+.req-title[data-tone='missing'] { color: var(--warn); }
+
+.req-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.req-list li { margin-bottom: 4px; }
+.req-list[data-tone='missing'] li { color: var(--muted); }
+
+/* --- Tag + bullet editors ------------------------------------------------ */
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 6px 4px 11px;
+  font-size: 12px;
+}
+
+.tag button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 3px;
+}
+
+.tag button:hover { color: var(--danger); }
+
+.bullet-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.bullet-row textarea,
+.bullet-row input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 11px;
+  outline: none;
+  resize: vertical;
+}
+
+.bullet-row textarea:focus,
+.bullet-row input:focus { border-color: var(--accent); }
+
+.card.nested {
+  background: var(--bg);
+  margin: 12px 0;
 }

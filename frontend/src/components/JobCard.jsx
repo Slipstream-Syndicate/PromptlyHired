@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import ApplyLink from './ApplyLink.jsx'
 
 const JOB_TYPE_LABELS = {
@@ -20,36 +20,22 @@ function Logo({ company }) {
 }
 
 /**
- * Save and Follow are independent actions, never a combined toggle:
- * saving shortlists the job, following the company subscribes to notifications.
+ * A feed card. Deliberately shows no match percentage: scoring is one API call
+ * per job, so it happens when the user opens a card, not across the whole feed.
  */
-export default function JobCard({ job, pinned, onToggleSave, onToggleFollow, onApplied }) {
-  const [busy, setBusy] = useState(null)
-
-  const run = async (key, fn) => {
-    setBusy(key)
-    try {
-      await fn()
-    } finally {
-      setBusy(null)
-    }
-  }
-
+export default function JobCard({ job, onToggleSave, busy }) {
   return (
-    <article className={pinned ? 'card pinned' : 'card'}>
+    <article className="card">
       <div className="job-top">
         <Logo company={job.company} />
         <div className="job-main">
           <h3 className="job-title">
-            {job.url ? (
-              <a href={job.url} target="_blank" rel="noopener noreferrer">
-                {job.title}
-              </a>
-            ) : (
-              job.title
-            )}
+            <Link to={`/jobs/${job.id}`}>{job.title}</Link>
           </h3>
           <p className="job-company">{job.company.name}</p>
+          {job.company.short_description && (
+            <p className="job-blurb">{job.company.short_description}</p>
+          )}
         </div>
       </div>
 
@@ -57,49 +43,26 @@ export default function JobCard({ job, pinned, onToggleSave, onToggleFollow, onA
         {job.location && <span className="chip">{job.location}</span>}
         {job.job_type && <span className="chip">{JOB_TYPE_LABELS[job.job_type]}</span>}
         {job.salary_range && <span className="chip salary">{job.salary_range}</span>}
-        {job.posted_date && <span className="chip">Posted {job.posted_date}</span>}
+        {job.has_match && <span className="chip analysed">✓ Analysed</span>}
+        {job.has_documents && <span className="chip analysed">📄 Documents</span>}
       </div>
 
       <div className="job-actions">
         <ApplyLink job={job} />
 
+        <Link className="btn" to={`/jobs/${job.id}`}>
+          View match
+        </Link>
+
         {onToggleSave && (
           <button
             className={job.is_saved ? 'btn on' : 'btn'}
-            disabled={busy === 'save'}
-            onClick={() => run('save', () => onToggleSave(job))}
+            disabled={busy}
+            onClick={() => onToggleSave(job)}
             aria-pressed={job.is_saved}
           >
             {job.is_saved ? '♥ Saved' : '♡ Save'}
           </button>
-        )}
-
-        {onToggleFollow && (
-          <button
-            className={job.is_company_followed ? 'btn on' : 'btn'}
-            disabled={busy === 'follow'}
-            onClick={() => run('follow', () => onToggleFollow(job))}
-            aria-pressed={job.is_company_followed}
-            title="Get notified about new jobs from this company"
-          >
-            {job.is_company_followed ? '✓ Following' : '+ Follow company'}
-          </button>
-        )}
-
-        {onApplied && !job.application_status && (
-          <button
-            className="btn"
-            disabled={busy === 'apply'}
-            onClick={() => run('apply', () => onApplied(job))}
-          >
-            I applied
-          </button>
-        )}
-
-        {job.application_status && (
-          <span className="status" data-s={job.application_status}>
-            Tracked
-          </span>
         )}
       </div>
     </article>
