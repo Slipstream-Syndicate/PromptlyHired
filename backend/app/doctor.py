@@ -1,7 +1,7 @@
 """Verify every external integration actually works.
 
-Configuration being *present* is not the same as it *working* - a typo'd SMTP
-password or an R2 token without write permission both look fine in the env vars
+Configuration being *present* is not the same as it *working* - a wrong model name
+or an R2 token without write permission both look fine in the env vars
 and fail silently at the moment you need them. This connects to each service for
 real and reports what happened.
 
@@ -49,52 +49,31 @@ def check_migrations() -> tuple[str, str, str]:
         return _line(FAIL, "Migrations", f"no alembic_version table ({str(exc)[:120]})")
 
 
-def check_job_source() -> tuple[str, str, str]:
-    if not settings.rapidapi_key:
-        return _line(SKIP, "JSearch", "RAPIDAPI_KEY unset - feed serves sample listings")
-    import asyncio
-
-    from app.services import jsearch
-
-    try:
-        jobs, source, _ = asyncio.run(
-            jsearch.search("software engineer", None, None, None)
-        )
-        return _line(OK, "JSearch", f"{len(jobs)} listings from {source} (1 API call used)")
-    except Exception as exc:  # noqa: BLE001
-        return _line(FAIL, "JSearch", str(exc)[:200])
 
 
-def check_adzuna() -> tuple[str, str, str]:
-    if not settings.adzuna_enabled:
-        return _line(SKIP, "Adzuna", "not configured (optional secondary source)")
-    import asyncio
-
-    from app.services import adzuna
-
-    try:
-        jobs = asyncio.run(adzuna.search("software engineer", None))
-        return _line(OK, "Adzuna", f"{len(jobs)} listings (country={settings.adzuna_country})")
-    except Exception as exc:  # noqa: BLE001
-        return _line(FAIL, "Adzuna", str(exc)[:200])
-
-
-
-def check_claude() -> tuple[str, str, str]:
-    """Make a real (tiny) call - a key can be present, malformed, and unbilled."""
+def check_ai() -> tuple[str, str, str]:
+    """Make a real (tiny) call - a key can be present, malformed, and unusable."""
     if not settings.ai_enabled:
         return _line(
             FAIL if settings.is_production else SKIP,
-            "Claude API",
-            "ANTHROPIC_API_KEY unset - resume analysis, matching and generation are all off",
+            "Gemini API",
+            "GEMINI_API_KEY unset - resume analysis, matching and generation are all off",
         )
-    try:
-        from app.services.ai import ping
+    from app.services import ai
 
-        model = ping()
-        return _line(OK, "Claude API", f"reachable, responded as {model}")
+    try:
+        reply = ai.ping()
+        return _line(OK, "Gemini API", f"{settings.gemini_model} replied {reply!r}")
     except Exception as exc:  # noqa: BLE001
-        return _line(FAIL, "Claude API", str(exc)[:200])
+        detail = str(exc)[:160]
+        # A wrong model name is the most likely failure, so name the alternatives.
+        try:
+            models = [m for m in ai.list_models() if "flash" in m.lower()][:4]
+            if models:
+                detail += f" | flash models on this key: {', '.join(models)}"
+        except Exception:  # noqa: BLE001
+            pass
+        return _line(FAIL, "Gemini API", detail)
 
 
 
@@ -133,9 +112,7 @@ def run() -> int:
         check_database(),
         check_migrations(),
         check_frontend_urls(),
-        check_job_source(),
-        check_adzuna(),
-        check_claude(),
+        check_ai(),
         check_media_storage(),
     ]
 

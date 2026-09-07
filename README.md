@@ -1,8 +1,10 @@
 # JobTrail
 
-Reads your resume, works out your skillset, finds jobs that fit it, tells you how
-well you actually match each one, and writes a tailored resume and cover letter
+Paste a link to any job. It reads your resume, tells you how well you actually
+match that role, shows the gaps, and writes a tailored resume and cover letter
 you edit before exporting.
+
+**Runs for £0.** No paid APIs anywhere.
 
 One React PWA, one FastAPI backend, one URL — phone, laptop and tablet, no native
 builds. See [CLAUDE.md](CLAUDE.md) for the full spec and the reasoning behind the
@@ -11,12 +13,12 @@ architecture.
 ## How it works
 
 1. **Upload your resume.** Text is extracted locally (pypdf / python-docx), falling
-   back to Claude reading the PDF natively only if it's a scan.
-2. **Claude derives a skill profile** — skills, job titles, seniority, domains. You
-   can edit it; extraction is a starting point, not an authority on your career.
-3. **The feed searches automatically** from that profile. You never type keywords.
-4. **Open a job** to get a match percentage, the requirements you meet, and the gaps.
-5. **Generate a resume and cover letter**, edit them in-app, export to PDF.
+   back to the model reading the PDF natively only if it's a scan.
+2. **Paste a job link.** The page is fetched and parsed — schema.org JSON-LD first,
+   so most pastes cost no AI quota. Sites that block fetches (LinkedIn, Indeed) have
+   a paste-the-text fallback.
+3. **Get your match** — percentage, requirements met, and the gaps.
+4. **Generate a resume and cover letter**, edit them in-app, export to PDF.
 
 `History` keeps every job you've prepared documents for.
 
@@ -24,7 +26,7 @@ architecture.
 
 | Phase | State |
 | --- | --- |
-| 1 — Resume-driven search | done |
+| 1 — Resume + paste-a-link | done |
 | 2 — Match analysis | done |
 | 3 — Document generation, editor, export | done |
 | 4 — Polish (steering, templates, diff view) | partial: steering is wired end to end |
@@ -50,9 +52,9 @@ npm run dev                                                    # :5173
 
 | Variable | Without it |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | **Nothing AI works.** No skill profile, no matching, no generation — the endpoints return a clear 503. This is the product. |
-| `RAPIDAPI_KEY` | The feed serves a handful of sample listings instead of real ones. |
-| `ADZUNA_APP_ID` / `_KEY` | Optional second job source. JSearch alone still works. |
+| `GEMINI_API_KEY` | **Nothing AI works.** Free key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey). |
+
+There are no other keys. There is no job-board API.
 
 Check what's actually wired up:
 
@@ -61,31 +63,28 @@ curl localhost:8000/health                       # readiness flags
 .venv/Scripts/python.exe -m app.tasks doctor     # connects to each service for real
 ```
 
-## What the AI costs
+## What it costs
 
-Claude Opus 5 is $5/$25 per million tokens. Per action, roughly:
+Nothing. Gemini's free tier covers the AI; jobs come from links you paste, so there
+is no job-board API to pay for; Render, Netlify and Cloudflare R2 free tiers cover
+the rest.
 
-| Action | Cost | When |
-| --- | --- | --- |
-| Resume → skill profile | ~$0.05 | Once per upload |
-| Match analysis | ~$0.03 | Only when you open a job card |
-| Resume or cover letter | ~$0.08 | On request |
-
-Three rules the code enforces, not just documents:
-
-- **Nothing is scored until you open it.** Scoring a 20-result feed would cost ~20×
-  the search itself, mostly on jobs nobody opens.
-- **The resume is a cached prompt prefix.** It's identical across every call for a
-  user; `usage.cache_read_input_tokens` is logged so a silently broken cache shows up.
-- **Every AI result is persisted.** Recomputation is always user-initiated.
-
-Every AI endpoint is rate limited (`AI_CALLS_PER_HOUR`, default 60). An unlimited
-scoring endpoint is an unlimited bill.
+The real constraint is **rate limit**, not money — the free tier allows single-digit
+requests per minute. So the code parses pages itself before ever calling the model,
+persists every AI result, and surfaces quota errors as "wait a minute" rather than
+a failure.
 
 ## Security
 
-Job descriptions come from a third-party aggregator and are written by strangers,
-then fed to an LLM. That makes prompt injection the central concern, not a footnote:
+Job descriptions are fetched from pages you paste links to, written by strangers,
+then fed to an LLM. Two concerns dominate:
+
+**SSRF.** The server fetches a URL you control. Private, loopback and link-local
+addresses (cloud metadata at `169.254.169.254`) are refused, only http(s) is
+allowed, and every redirect is re-validated — an open redirect to an internal
+address is the standard bypass.
+
+**Prompt injection** is the central concern, not a footnote:
 
 - Adverts are wrapped in delimiters and labelled as data, never instructions. A
   posting that emits the closing delimiter to break out has it stripped.
@@ -94,8 +93,8 @@ then fed to an LLM. That makes prompt injection the central concern, not a footn
   clamped 0–100 server-side regardless of what comes back.
 - No LLM output triggers a side effect. Generation writes a draft; you review and
   edit before anything is exported. Nothing is ever sent on your behalf.
-- Your resume goes to Claude because the feature requires it, and nowhere else. It
-  is never logged in full.
+- Your resume goes to the model because the feature requires it, and nowhere else.
+  It is never logged in full.
 
 Carried over unchanged: bcrypt hashing, 15-minute access JWTs with rotating hashed
 refresh tokens, SQLAlchemy ORM only, Pydantic validation at every boundary, auth
@@ -110,7 +109,7 @@ python ../scripts/audit_spec.py           # checks the code against CLAUDE.md
 ```
 
 Tests run against real Postgres, never SQLite — the schema uses native enums, JSONB
-and server-side defaults. **Every Claude call is stubbed**, so the suite never spends
+and server-side defaults. **Every model call is stubbed**, so the suite never spends
 money. Coverage includes the injection defenses and score clamping directly.
 
 ## Deploying

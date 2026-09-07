@@ -14,10 +14,6 @@ _PG_SCHEME_FIXES = {
     "postgresql+psycopg2://": "postgresql+psycopg://",
 }
 
-# JSearch and Adzuna disagree on the code for the same market: JSearch wants
-# "uk", Adzuna's URL path wants "gb". One user-facing setting, mapped per API.
-_ADZUNA_COUNTRY_ALIASES = {"uk": "gb", "en": "gb"}
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -44,28 +40,22 @@ class Settings(BaseSettings):
     app_base_url: str = "http://localhost:5173"
 
     # --- Job sources ---
-    # One market setting for every source (see _ADZUNA_COUNTRY_ALIASES).
-    job_country: str = "us"
-    rapidapi_key: str = ""
-    jsearch_host: str = "jsearch.p.rapidapi.com"
-    # Serve identical searches from memory for this long. The free plan is
-    # ~200 calls/month, and building a UI means re-running the same search
-    # constantly; 0 disables the cache.
-    jsearch_cache_ttl_minutes: int = 15
-    # Optional secondary source. Unset = JSearch alone still serves the feed.
-    adzuna_app_id: str = ""
-    adzuna_app_key: str = ""
+    # There are none. Jobs enter the system only when a user pastes a link to
+    # one, which is why this project costs nothing to run. Every job-board API
+    # worth using is paid, partner-only, or forbids the scraping that would
+    # replace it.
 
-    # --- Claude API ---
-    # Every call is server-side; the key never reaches the browser.
-    anthropic_api_key: str = ""
-    claude_model: str = "claude-opus-5"
-    # Effort is the main cost/quality dial. Extraction and scoring produce
-    # constrained JSON and do not need deep reasoning; drafting a document does.
-    ai_effort_extraction: str = "medium"
-    ai_effort_match: str = "medium"
-    ai_effort_generation: str = "high"
-    # A scoring endpoint without a limit is a way to spend money fast.
+    # --- Gemini (free tier) ---
+    # Server-side only; the key never reaches the browser.
+    gemini_api_key: str = ""
+    # Free tier is Flash-only. Run `python -m app.tasks doctor` to list what
+    # this key can actually call.
+    gemini_model: str = "gemini-flash-latest"
+    # Deeper reasoning for document drafting; extraction and scoring do not
+    # need it and it costs latency against a low free-tier rate limit.
+    gemini_thinking_level: str = "low"
+    # The free tier allows single-digit requests per minute, so this is about
+    # staying inside the quota rather than controlling spend.
     ai_calls_per_hour: int = 60
 
     # --- Uploads (resumes and profile pictures) ---
@@ -108,21 +98,8 @@ class Settings(BaseSettings):
         return self.env.lower() in {"production", "prod"}
 
     @property
-    def jsearch_country(self) -> str:
-        return self.job_country.lower()
-
-    @property
-    def adzuna_country(self) -> str:
-        c = self.job_country.lower()
-        return _ADZUNA_COUNTRY_ALIASES.get(c, c)
-
-    @property
     def ai_enabled(self) -> bool:
-        return bool(self.anthropic_api_key)
-
-    @property
-    def adzuna_enabled(self) -> bool:
-        return bool(self.adzuna_app_id and self.adzuna_app_key)
+        return bool(self.gemini_api_key)
 
     @property
     def uses_s3(self) -> bool:
@@ -135,12 +112,9 @@ class Settings(BaseSettings):
         """
         return {
             "env": self.env,
-            "live_job_listings": bool(self.rapidapi_key),
-            "secondary_source_adzuna": self.adzuna_enabled,
             "ai_features": self.ai_enabled,
             "durable_media_storage": self.uses_s3,
             "shared_rate_limit_store": bool(self.redis_url),
-            "job_country": self.job_country,
         }
 
     def production_blockers(self) -> list[str]:
@@ -178,11 +152,9 @@ class Settings(BaseSettings):
             )
         if not self.ai_enabled:
             warnings.append(
-                "ANTHROPIC_API_KEY is unset: resume analysis, match scoring and document "
+                "GEMINI_API_KEY is unset: resume analysis, match scoring and document "
                 "generation are all disabled. That is the core of the product."
             )
-        if not self.rapidapi_key:
-            warnings.append("RAPIDAPI_KEY is unset: the feed will serve sample listings.")
         if not self.redis_url:
             warnings.append(
                 "REDIS_URL is unset: rate limiting is per-process, so it is only accurate "

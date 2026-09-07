@@ -196,16 +196,6 @@ class JobOut(BaseModel):
     has_documents: bool = False
 
 
-class SearchResponse(BaseModel):
-    results: list[JobOut]
-    source: str
-    # search-v2 paginates by opaque cursor, not page number.
-    next_cursor: str | None = None
-    # Echoes the terms derived from the skill profile, so the UI can show what
-    # it searched for without the user having typed anything.
-    searched_for: str | None = None
-
-
 class SavedJobOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

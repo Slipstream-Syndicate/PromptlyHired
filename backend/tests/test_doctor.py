@@ -16,15 +16,15 @@ def test_missing_ai_key_is_a_hard_failure_in_production(monkeypatch):
         cors_origins=["https://a.netlify.app"], app_base_url="https://a.netlify.app",
     )
     monkeypatch.setattr(doctor, "settings", prod)
-    status, name, detail = doctor.check_claude()
+    status, name, detail = doctor.check_ai()
     assert status == "FAIL"
-    assert "ANTHROPIC_API_KEY" in detail
+    assert "GEMINI_API_KEY" in detail
 
 
 
 def test_missing_ai_key_is_only_a_skip_in_development(monkeypatch):
     monkeypatch.setattr(doctor, "settings", Settings(env="development"))
-    assert doctor.check_claude()[0] == "SKIP"
+    assert doctor.check_ai()[0] == "SKIP"
 
 
 

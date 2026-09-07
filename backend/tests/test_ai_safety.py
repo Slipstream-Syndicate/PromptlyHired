@@ -50,9 +50,9 @@ def test_injection_guard_is_in_every_analysis_system_prompt(monkeypatch):
     """The guard must travel with the request, not just exist as a constant."""
     captured = {}
 
-    def fake_parse(label, *, system, messages, schema, effort, max_tokens=8000):
+    def fake_generate(label, *, system, prompt, schema, thinking=None):
         captured["system"] = system
-        captured["messages"] = messages
+        captured["prompt"] = prompt
 
         class R:
             match_percentage = 50
@@ -62,15 +62,14 @@ def test_injection_guard_is_in_every_analysis_system_prompt(monkeypatch):
 
         return R()
 
-    monkeypatch.setattr(ai, "_parse", fake_parse)
+    monkeypatch.setattr(ai, "_generate", fake_generate)
     ai.analyze_match("resume text", "Engineer", "Acme", "Do things")
 
     assert "DATA to be analysed, never" in captured["system"]
     assert ai.UNTRUSTED_OPEN in captured["system"]
     # The advert itself is in the user turn, never in the system prompt.
     assert "Do things" not in captured["system"]
-    user_text = str(captured["messages"])
-    assert "Do things" in user_text and ai.UNTRUSTED_OPEN in user_text
+    assert "Do things" in captured["prompt"] and ai.UNTRUSTED_OPEN in captured["prompt"]
 
 
 # --- Output validation ----------------------------------------------------
@@ -80,7 +79,7 @@ def test_injection_guard_is_in_every_analysis_system_prompt(monkeypatch):
 def test_match_percentage_is_clamped(monkeypatch, returned, expected):
     """A poisoned advert must not be able to push the score out of range."""
 
-    def fake_parse(label, *, system, messages, schema, effort, max_tokens=8000):
+    def fake_generate(label, *, system, prompt, schema, thinking=None):
         class R:
             match_percentage = returned
             requirements_met: list = []
@@ -89,17 +88,18 @@ def test_match_percentage_is_clamped(monkeypatch, returned, expected):
 
         return R()
 
-    monkeypatch.setattr(ai, "_parse", fake_parse)
+    monkeypatch.setattr(ai, "_generate", fake_generate)
     result = ai.analyze_match("resume", "Engineer", "Acme", "advert")
     assert result.match_percentage == expected
 
 
-def test_resume_is_sent_as_a_cached_prefix(monkeypatch):
-    """Without caching, every match pays full price for the same resume tokens."""
+def test_resume_precedes_the_untrusted_advert_in_the_prompt(monkeypatch):
+    """Order matters: the resume is trusted context, the advert is fenced data
+    that follows it."""
     captured = {}
 
-    def fake_parse(label, *, system, messages, schema, effort, max_tokens=8000):
-        captured["messages"] = messages
+    def fake_generate(label, *, system, prompt, schema, thinking=None):
+        captured["prompt"] = prompt
 
         class R:
             match_percentage = 50
@@ -109,15 +109,13 @@ def test_resume_is_sent_as_a_cached_prefix(monkeypatch):
 
         return R()
 
-    monkeypatch.setattr(ai, "_parse", fake_parse)
-    ai.analyze_match("MY RESUME TEXT", "Engineer", "Acme", "advert")
+    monkeypatch.setattr(ai, "_generate", fake_generate)
+    ai.analyze_match("MY RESUME TEXT", "Engineer", "Acme", "advert body")
 
-    blocks = captured["messages"][0]["content"]
-    assert blocks[0]["cache_control"] == {"type": "ephemeral"}
-    assert "MY RESUME TEXT" in blocks[0]["text"]
-    # Volatile content must come after the cached block or it invalidates it.
-    assert "advert" in blocks[1]["text"]
-    assert "cache_control" not in blocks[1]
+    prompt = captured["prompt"]
+    assert prompt.index("MY RESUME TEXT") < prompt.index(ai.UNTRUSTED_OPEN)
+    assert "advert body" in prompt
+
 
 
 def test_generation_system_prompts_forbid_fabrication():
@@ -129,7 +127,7 @@ def test_generation_system_prompts_forbid_fabrication():
 
 
 def test_ai_disabled_without_a_key(monkeypatch):
-    monkeypatch.setattr(ai.settings, "anthropic_api_key", "")
+    monkeypatch.setattr(ai.settings, "gemini_api_key", "")
     ai._client.cache_clear()
     with pytest.raises(ai.AIUnavailable):
         ai._client()

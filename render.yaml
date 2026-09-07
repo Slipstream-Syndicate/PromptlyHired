@@ -38,12 +38,8 @@ services:
         sync: false
       - key: APP_BASE_URL
         sync: false
-      - key: JOB_COUNTRY
-        value: uk
-      - key: RAPIDAPI_KEY
-        sync: false
-      # The core of the product: resume analysis, matching, generation.
-      - key: ANTHROPIC_API_KEY
+      # The core of the product. Free key: https://aistudio.google.com/apikey
+      - key: GEMINI_API_KEY
         sync: false
       # Resumes and profile pictures must not live on the container
       # filesystem - Render wipes it on every deploy. Point these at R2.
@@ -58,8 +54,4 @@ services:
       - key: S3_SECRET_ACCESS_KEY
         sync: false
       - key: S3_PUBLIC_BASE_URL
-        sync: false
-      - key: ADZUNA_APP_ID
-        sync: false
-      - key: ADZUNA_APP_KEY
         sync: false

@@ -125,7 +125,7 @@ async def upload_resume(
                 seniority=clean_text(extracted.seniority),
                 years_experience=max(0.0, min(80.0, float(extracted.years_experience or 0))),
                 summary=clean_text(extracted.summary),
-                model_used=settings.claude_model,
+                model_used=settings.gemini_model,
             )
         )
     except ai.AIUnavailable:
@@ -172,7 +172,7 @@ def reanalyze(resume_id: int, user: CurrentUser, db: DbSession) -> SkillProfile:
     profile.seniority = clean_text(extracted.seniority)
     profile.years_experience = max(0.0, min(80.0, float(extracted.years_experience or 0)))
     profile.summary = clean_text(extracted.summary)
-    profile.model_used = settings.claude_model
+    profile.model_used = settings.gemini_model
     profile.edited_by_user = False
     db.add(profile)
     db.commit()

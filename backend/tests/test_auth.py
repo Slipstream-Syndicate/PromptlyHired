@@ -13,7 +13,7 @@ def test_health_reports_readiness(client):
     body = r.json()
     assert body["status"] == "ok"
     # Readiness flags let a deployment be checked without reading logs.
-    for key in ("live_job_listings", "ai_features", "durable_media_storage"):
+    for key in ("ai_features", "durable_media_storage"):
         assert key in body
 
 

@@ -1,10 +1,25 @@
 """Document generation, editing, and the History view derived from it."""
 
 
-def _first_job(client, headers):
-    return client.get(
-        "/api/jobs/search", params={}, headers=headers
-    ).json()["results"][0]
+SAMPLE = (
+    "Backend Engineer at Acme Ltd. Python, PostgreSQL and AWS. You will design "
+    "APIs and own services in production. Five years of experience required."
+) * 3
+
+
+def _first_job(client, headers, title="Backend Engineer"):
+    """Jobs are pasted, not searched.
+
+    The URL is the dedup key, so distinct roles need distinct URLs - two pastes
+    of the same link deliberately collapse onto one job.
+    """
+    slug = title.lower().replace(" ", "-")
+    return client.post(
+        "/api/jobs/from-text",
+        headers=headers,
+        json={"text": SAMPLE, "title": title, "company": "Acme Ltd",
+              "url": f"https://example.com/jobs/{slug}"},
+    ).json()
 
 
 def test_generate_resume_and_cover_letter(client, with_resume, ai_stub):
@@ -140,7 +155,7 @@ def test_history_groups_documents_by_job(client, with_resume, ai_stub):
 
 def test_history_covers_multiple_jobs_most_recent_first(client, with_resume, ai_stub):
     headers, _ = with_resume()
-    jobs = client.get("/api/jobs/search", headers=headers).json()["results"][:2]
+    jobs = [_first_job(client, headers, "Role A"), _first_job(client, headers, "Role B")]
     for job in jobs:
         client.post(f"/api/jobs/{job['id']}/documents", headers=headers, json={"kind": "resume"})
 

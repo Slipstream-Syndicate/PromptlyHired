@@ -25,10 +25,7 @@ TEST_DB = os.environ.get("TEST_DATABASE_NAME", "jobtrail_pytest")
 
 # Must be set before app.config is imported anywhere.
 os.environ["DATABASE_URL"] = ADMIN_URL.rsplit("/", 1)[0] + f"/{TEST_DB}"
-os.environ["RAPIDAPI_KEY"] = ""
-os.environ["ADZUNA_APP_ID"] = ""
-os.environ["ADZUNA_APP_KEY"] = ""
-os.environ["ANTHROPIC_API_KEY"] = ""
+os.environ["GEMINI_API_KEY"] = ""
 os.environ["REDIS_URL"] = ""
 os.environ.setdefault("JWT_SECRET", "test-secret-not-used-in-production-abcdefgh")
 
@@ -208,10 +205,48 @@ def ai_stub(monkeypatch):
     monkeypatch.setattr(ai, "extract_skill_profile", extract)
     monkeypatch.setattr(ai, "analyze_match", match)
     monkeypatch.setattr(ai, "generate_resume", gen_resume)
+    def extract_job(page_text, url):
+        calls["job"] = calls.get("job", 0) + 1
+
+        class J:
+            title = "Backend Engineer"
+            company = "Acme Ltd"
+            location = "London, UK"
+            description = "We need a Python engineer. " * 20
+
+        return J()
+
     monkeypatch.setattr(ai, "generate_cover_letter", gen_cover)
+    monkeypatch.setattr(ai, "extract_job_from_page", extract_job)
     # The routers imported the module, so patching the module attributes is
     # enough - they call ai.<fn> rather than holding direct references.
     return calls
+
+
+SAMPLE_JOB_TEXT = (
+    "Backend Engineer at Acme Ltd. We are looking for a Python engineer with "
+    "PostgreSQL and AWS experience to build payment services. You will design "
+    "APIs, mentor juniors, and own services in production. Requirements: five "
+    "years of Python, strong SQL, cloud experience, and a track record of "
+    "shipping. Nice to have: Go, Kafka, Kubernetes."
+) * 2
+
+
+@pytest.fixture
+def with_job(client):
+    """Jobs enter by pasting, so tests paste text (which costs no AI quota)."""
+
+    def _make(headers, title="Backend Engineer", company="Acme Ltd"):
+        r = client.post(
+            "/api/jobs/from-text",
+            headers=headers,
+            json={"text": SAMPLE_JOB_TEXT, "title": title, "company": company,
+                  "url": "https://example.com/jobs/1"},
+        )
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    return _make
 
 
 @pytest.fixture

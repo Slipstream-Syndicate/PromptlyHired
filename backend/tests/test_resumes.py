@@ -150,7 +150,11 @@ def test_delete_resume_removes_derived_data(client, with_resume, ai_stub):
     """A CV is sensitive data - the user must be able to remove it, and
     everything derived from it goes too."""
     headers, resume = with_resume()
-    job = client.get("/api/jobs/search", headers=headers).json()["results"][0]
+    job = client.post(
+        "/api/jobs/from-text", headers=headers,
+        json={"text": "Backend Engineer at Acme. Python and PostgreSQL required. " * 8,
+              "title": "Backend Engineer", "company": "Acme Ltd"},
+    ).json()
     client.post(f"/api/jobs/{job['id']}/match", headers=headers)
     client.post(f"/api/jobs/{job['id']}/documents", headers=headers, json={"kind": "resume"})
     assert client.get("/api/history", headers=headers).json()

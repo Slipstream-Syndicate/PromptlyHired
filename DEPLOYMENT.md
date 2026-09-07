@@ -35,9 +35,9 @@ Run these locally and keep the output somewhere safe; you'll paste them in later
 python -c "import secrets; print(secrets.token_urlsafe(64))"
 ```
 
-You also need an **Anthropic API key** from
-[console.anthropic.com](https://console.anthropic.com). Without it there is no
-skill extraction, no matching and no document generation — the whole product.
+You also need a **Gemini API key** from
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey) — free, no card.
+Without it there is no skill extraction, no matching and no document generation.
 
 ---
 
@@ -81,9 +81,7 @@ Back in Render → your web service → **Environment**:
 | --- | --- |
 | `CORS_ORIGINS` | `https://jobtrail.netlify.app` |
 | `APP_BASE_URL` | `https://jobtrail.netlify.app` |
-| `JOB_COUNTRY` | `uk` (or `us`, `de`, …) |
-| `RAPIDAPI_KEY` | your JSearch key |
-| `ANTHROPIC_API_KEY` | your Anthropic key |
+| `GEMINI_API_KEY` | your free Gemini key |
 
 The API **refuses to start** in production if `JWT_SECRET` is a default/short
 value, if `CORS_ORIGINS` is missing, wildcarded, or non-HTTPS. That is deliberate —
@@ -91,20 +89,14 @@ a misconfigured deploy should fail immediately, not leak.
 
 ---
 
-## 5. Set a spending expectation
+## 5. Costs
 
-Claude Opus 5 costs $5/$25 per million tokens. In practice: ~$0.05 per resume
-upload, ~$0.03 per job match, ~$0.08 per generated document. A session where
-someone opens ten jobs and generates twice runs about **50 cents**.
+There are none. Gemini's free tier covers the AI, and jobs come from links your
+users paste rather than a paid job-board API.
 
-That is fine for personal use and expensive as a free public product. Before
-sharing the URL widely, either keep it private or add a per-user cap — the
-`AI_CALLS_PER_HOUR` limit (default 60) is a blunt backstop, not a budget.
-
-Watch real usage in the Anthropic console, and check the API logs for
-`Claude match-analysis: input=... cached_read=...`. If `cached_read` is 0 across
-repeated calls, prompt caching has broken and every match is paying full price
-for the same resume tokens.
+The limit that will bite is **requests per minute**, not spend. If several people
+use it at once they will see 429s telling them to wait — that is the free tier, not
+a bug.
 
 ---
 
@@ -131,10 +123,6 @@ supply the bucket:
 
 ## 7. Optional extras
 
-**Adzuna** (second job source) — free key from
-[developer.adzuna.com](https://developer.adzuna.com/). Set `ADZUNA_APP_ID` and
-`ADZUNA_APP_KEY`. Leave blank and the feed runs on JSearch alone.
-
 **Redis** (`REDIS_URL`) — only needed if you scale past one instance/worker.
 Without it, auth rate limiting is per-process, so N workers means N× the limit.
 
@@ -151,8 +139,8 @@ python -m app.tasks doctor
 
 ```
 
-It round-trips a real object through R2, makes a real JSearch call, makes a real
-(tiny) Claude call, and reports any failure with the exact variable to fix.
+It round-trips a real object through R2 and makes a real
+(tiny) Gemini call, and reports any failure with the exact variable to fix.
 
 You can also check from anywhere with:
 
@@ -166,7 +154,6 @@ Every flag should be `true` for the features you configured:
 {
   "status": "ok",
   "env": "production",
-  "live_job_listings": true,
   "ai_features": true,
   "durable_media_storage": true
 }
@@ -176,7 +163,7 @@ Then, in a browser:
 
 1. Open the Netlify URL and sign up.
 2. Upload a resume on **Profile** and confirm a skill profile appears.
-3. Return to **Jobs** — the feed should populate with no keywords typed.
+3. Return to **Jobs** and paste a link to any job posting.
 4. Open a job, hit **Analyse my match**, then generate a document and export it.
 5. Hard-refresh on `/history` — it must load, not 404. (That is the SPA redirect;
    if it 404s, `netlify.toml` was not picked up.)
@@ -189,9 +176,8 @@ Then, in a browser:
   afterwards takes 30–60s. Not a bug.
 - **Render free Postgres expires after 30 days.** Back up or upgrade before then,
   or you lose the database.
-- **JSearch free tier is ~200 calls/month.** One feed search is one call; identical
-  searches within `JSEARCH_CACHE_TTL_MINUTES` are free.
-- **Anthropic is billed per token, with no free tier.** See step 5.
+- **Gemini free tier is a few requests per minute.** Pasting a link that parses
+  cleanly costs nothing; matching and generation each cost one call.
 
 ## Troubleshooting
 
@@ -201,6 +187,8 @@ Then, in a browser:
 | CORS errors in the console | `CORS_ORIGINS` on Render doesn't exactly match the Netlify origin (scheme included). |
 | API won't boot, logs say `CONFIG ERROR` | Intentional. The message names the exact variable to fix. |
 | `sqlalchemy.exc.NoSuchModuleError: postgres` | Shouldn't happen — `config.py` rewrites `postgres://`. If you see it, `DATABASE_URL` was overridden with something unusual. |
-| No skill profile after upload | `ANTHROPIC_API_KEY` unset or invalid — check `/health` and run the doctor. |
-| Match/generate return 503 | Same cause: no Anthropic key configured on the API service. |
+| No skill profile after upload | `GEMINI_API_KEY` unset or invalid — check `/health` and run the doctor. |
+| Match/generate return 503 | Same cause: no Gemini key on the API service. |
+| Match/generate return 429 | Free-tier rate limit. Wait a minute. |
+| "That site blocked the request" | LinkedIn/Indeed block server fetches. Use the paste-the-text tab. |
 | Resumes vanish after a deploy | `MEDIA_STORAGE` is not `s3`. See step 6. |

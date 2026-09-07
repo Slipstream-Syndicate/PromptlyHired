@@ -6,8 +6,8 @@ a PDF on each one would be wasted work.
 
 Local parsing first: pypdf and python-docx cost nothing. Only when a PDF yields
 too little text - a scan, or a design-heavy CV exported as images - do we fall
-back to Claude reading the PDF natively, which costs a call but is the only
-thing that works on an image-only document.
+back to the model reading the PDF natively, which costs a call but is the
+only thing that works on an image-only document.
 """
 
 from __future__ import annotations
@@ -61,42 +61,28 @@ def _from_docx(raw: bytes) -> str:
         raise ResumeParseError("That .docx file could not be read.") from exc
 
 
-def _from_pdf_via_claude(raw: bytes) -> str:
-    """Last resort for scanned PDFs. Costs one API call."""
+def _from_pdf_via_model(raw: bytes) -> str:
+    """Last resort for scanned PDFs. Costs one API call.
+
+    Gemini reads PDFs natively, so a scan that pypdf cannot touch still works.
+    """
     if not settings.ai_enabled:
         return ""
-    import base64
+    from google.genai import types
 
     from app.services.ai import _client
 
-    logger.info("Falling back to Claude for PDF text extraction (likely a scan)")
-    response = _client().messages.create(
-        model=settings.claude_model,
-        max_tokens=8000,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": base64.standard_b64encode(raw).decode("utf-8"),
-                        },
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            "Transcribe this resume as plain text, preserving section "
-                            "headings and bullet points. Output only the transcription."
-                        ),
-                    },
-                ],
-            }
+    logger.info("Falling back to the model for PDF text extraction (likely a scan)")
+    response = _client().models.generate_content(
+        model=settings.gemini_model,
+        contents=[
+            types.Part.from_bytes(data=raw, mime_type="application/pdf"),
+            "Transcribe this resume as plain text, preserving section headings and "
+            "bullet points. Output only the transcription.",
         ],
     )
-    return "".join(b.text for b in response.content if b.type == "text").strip()
+    return (response.text or "").strip()
+
 
 
 def extract(raw: bytes, content_type: str) -> str:
@@ -112,7 +98,7 @@ def extract(raw: bytes, content_type: str) -> str:
     elif content_type in PDF_TYPES:
         text = _from_pdf(raw)
         if len(text) < MIN_USABLE_CHARS:
-            text = _from_pdf_via_claude(raw) or text
+            text = _from_pdf_via_model(raw) or text
     else:
         raise ResumeParseError("Upload a PDF, DOCX or plain text resume.")
 

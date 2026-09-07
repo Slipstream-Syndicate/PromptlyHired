@@ -161,8 +161,11 @@ export const api = {
   },
   me: () => request('/api/auth/me'),
 
-  // --- Jobs ---
-  searchJobs: (params) => request(`/api/jobs/search${qs(params)}`),
+  // --- Jobs (added by pasting a link; there is no feed) ---
+  listJobs: () => request('/api/jobs'),
+  addJobFromUrl: (url) => request('/api/jobs/from-url', { method: 'POST', body: { url } }),
+  addJobFromText: (payload) =>
+    request('/api/jobs/from-text', { method: 'POST', body: payload }),
   getJob: (id) => request(`/api/jobs/${id}`),
   // Costs an API call, so it is an explicit POST rather than part of GET.
   analyzeMatch: (id, refresh = false) =>
