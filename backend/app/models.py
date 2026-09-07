@@ -8,6 +8,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -15,6 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -31,18 +33,9 @@ class JobType(str, enum.Enum):
     remote = "remote"
 
 
-class ApplicationStatus(str, enum.Enum):
-    """A job only becomes an Application once actually applied to.
-
-    Pre-application shortlisting lives in SavedJob, not here.
-    """
-
-    applied = "applied"
-    online_assessment = "online_assessment"
-    interview = "interview"
-    offer = "offer"
-    rejected = "rejected"
-    withdrawn = "withdrawn"
+class DocumentKind(str, enum.Enum):
+    resume = "resume"
+    cover_letter = "cover_letter"
 
 
 class User(Base):
@@ -57,43 +50,73 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    preferences: Mapped[JobPreferences | None] = relationship(
-        back_populates="user", uselist=False, cascade="all, delete-orphan"
+    resumes: Mapped[list[Resume]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
     )
     saved_jobs: Mapped[list[SavedJob]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-    follows: Mapped[list[Follow]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
-    applications: Mapped[list[Application]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
 
 
-class JobPreferences(Base):
-    """Single source of truth for profile defaults AND homepage search filters.
+class Resume(Base):
+    """The uploaded source document.
 
-    The homepage filter UI reads and writes these exact fields, so there is no
-    drift between what is stored on the profile and what the user searches with.
+    Extracted text is stored alongside the file so match scoring and generation
+    never re-download or re-parse the original on every call.
+
+    Uploading a new resume deactivates the previous one rather than replacing
+    it: generated documents reference the resume they were built from, and that
+    provenance has to survive.
     """
 
-    __tablename__ = "job_preferences"
+    __tablename__ = "resumes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    keywords: Mapped[str | None] = mapped_column(String(255))
-    location: Mapped[str | None] = mapped_column(String(255))
-    salary_min: Mapped[int | None] = mapped_column(Integer)
-    salary_max: Mapped[int | None] = mapped_column(Integer)
-    job_type: Mapped[JobType | None] = mapped_column(Enum(JobType, name="job_type"))
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=utcnow, nullable=False
+    file_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    extracted_text: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    user: Mapped[User] = relationship(back_populates="preferences")
+    user: Mapped[User] = relationship(back_populates="resumes")
+    skill_profile: Mapped[SkillProfile | None] = relationship(
+        back_populates="resume", uselist=False, cascade="all, delete-orphan"
+    )
+
+
+class SkillProfile(Base):
+    """AI-derived skillset, one per Resume. Drives the automatic job search.
+
+    Derived once per resume, never per search. The user can edit it - extraction
+    is a starting point, not an authority on someone's own career.
+    """
+
+    __tablename__ = "skill_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    resume_id: Mapped[int] = mapped_column(
+        ForeignKey("resumes.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    skills: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    job_titles: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    domains: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    locations: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    seniority: Mapped[str | None] = mapped_column(String(60))
+    years_experience: Mapped[float | None] = mapped_column(Float)
+    summary: Mapped[str | None] = mapped_column(Text)
+    model_used: Mapped[str | None] = mapped_column(String(60))
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    edited_by_user: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    resume: Mapped[Resume] = relationship(back_populates="skill_profile")
 
 
 class Company(Base):
@@ -102,11 +125,12 @@ class Company(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     # Lowercased/trimmed name, so the same employer arriving from different
-    # listings collapses onto one Company row - and therefore one Follow.
+    # listings collapses onto one Company row.
     normalized_name: Mapped[str] = mapped_column(
         String(255), unique=True, index=True, nullable=False
     )
     logo_url: Mapped[str | None] = mapped_column(String(1024))
+    short_description: Mapped[str | None] = mapped_column(Text)
 
     jobs: Mapped[list[Job]] = relationship(back_populates="company")
 
@@ -128,13 +152,10 @@ class Job(Base):
     posted_date: Mapped[date | None] = mapped_column(Date, index=True)
     description: Mapped[str | None] = mapped_column(Text)
     job_type: Mapped[JobType | None] = mapped_column(Enum(JobType, name="job_type"))
-    # Which API the listing came from, plus that source's own id, for dedup.
     source_api: Mapped[str] = mapped_column(String(50), nullable=False)
-    # JSearch search-v2 ids are ~400-character opaque blobs, so this needs real
-    # headroom - 255 truncated them and broke the insert.
+    # JSearch search-v2 ids are ~400-character opaque blobs.
     external_id: Mapped[str] = mapped_column(String(768), nullable=False)
-    # The board the listing actually lives on (LinkedIn, Indeed, a careers
-    # page). Used to label the outbound Apply link with its destination.
+    # The board the listing lives on, used to label the outbound Apply link.
     source_publisher: Mapped[str | None] = mapped_column(String(120))
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True, nullable=False
@@ -143,29 +164,8 @@ class Job(Base):
     company: Mapped[Company] = relationship(back_populates="jobs")
 
 
-class Follow(Base):
-    """Company-level. Drives notifications only - no shortlist behaviour."""
-
-    __tablename__ = "follows"
-    __table_args__ = (UniqueConstraint("user_id", "company_id", name="uq_follow_user_company"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    company_id: Mapped[int] = mapped_column(
-        ForeignKey("companies.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-
-    user: Mapped[User] = relationship(back_populates="follows")
-    company: Mapped[Company] = relationship()
-
-
 class SavedJob(Base):
-    """Job-level shortlist. Shows on the Saved tab, triggers no notifications."""
+    """Shortlist. Job-level, no AI cost, no side effects."""
 
     __tablename__ = "saved_jobs"
     __table_args__ = (UniqueConstraint("user_id", "job_id", name="uq_saved_user_job"),)
@@ -185,9 +185,18 @@ class SavedJob(Base):
     job: Mapped[Job] = relationship()
 
 
-class Application(Base):
-    __tablename__ = "applications"
-    __table_args__ = (UniqueConstraint("user_id", "job_id", name="uq_application_user_job"),)
+class JobMatch(Base):
+    """AI match analysis, computed when a card is opened and cached forever after.
+
+    Keyed by resume as well as job: a new resume produces a new analysis, and
+    the old one survives for comparison. Recomputation is only ever
+    user-initiated, because every analysis costs a real API call.
+    """
+
+    __tablename__ = "job_matches"
+    __table_args__ = (
+        UniqueConstraint("user_id", "job_id", "resume_id", name="uq_match_user_job_resume"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(
@@ -196,52 +205,58 @@ class Application(Base):
     job_id: Mapped[int] = mapped_column(
         ForeignKey("jobs.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    status: Mapped[ApplicationStatus] = mapped_column(
-        Enum(ApplicationStatus, name="application_status"),
-        default=ApplicationStatus.applied,
-        nullable=False,
+    resume_id: Mapped[int] = mapped_column(
+        ForeignKey("resumes.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    applied_date: Mapped[date] = mapped_column(Date, nullable=False)
-    status_updated_at: Mapped[datetime] = mapped_column(
+    match_percentage: Mapped[int] = mapped_column(Integer, nullable=False)
+    requirements_met: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    requirements_missing: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    rationale: Mapped[str | None] = mapped_column(Text)
+    model_used: Mapped[str | None] = mapped_column(String(60))
+    generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    notes: Mapped[str | None] = mapped_column(Text)
-    # When we last nudged about this application going quiet, so reminders
-    # repeat on a cadence instead of every run.
-    last_reminder_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    user: Mapped[User] = relationship(back_populates="applications")
     job: Mapped[Job] = relationship()
-    events: Mapped[list[ApplicationEvent]] = relationship(
-        back_populates="application", cascade="all, delete-orphan"
-    )
+    resume: Mapped[Resume] = relationship()
 
 
-class ApplicationEvent(Base):
-    """Status transition history.
+class GeneratedDocument(Base):
+    """A tailored resume or cover letter.
 
-    The Application row only holds the *current* status, which cannot answer
-    "how long until I heard back" or "where do I lose people". Recording each
-    transition is what makes the funnel analytics real rather than a snapshot.
+    `content` is what the model produced and is never overwritten;
+    `edited_content` holds the user's revisions. Keeping both means "reset to
+    generated" always works, and makes it auditable what the AI actually wrote
+    versus what the user changed.
     """
 
-    __tablename__ = "application_events"
+    __tablename__ = "generated_documents"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    application_id: Mapped[int] = mapped_column(
-        ForeignKey("applications.id", ondelete="CASCADE"), index=True, nullable=False
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    from_status: Mapped[ApplicationStatus | None] = mapped_column(
-        Enum(ApplicationStatus, name="application_status")
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    to_status: Mapped[ApplicationStatus] = mapped_column(
-        Enum(ApplicationStatus, name="application_status"), nullable=False
+    resume_id: Mapped[int] = mapped_column(
+        ForeignKey("resumes.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    changed_at: Mapped[datetime] = mapped_column(
+    kind: Mapped[DocumentKind] = mapped_column(
+        Enum(DocumentKind, name="document_kind"), nullable=False
+    )
+    content: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    edited_content: Mapped[dict | None] = mapped_column(JSONB)
+    model_used: Mapped[str | None] = mapped_column(String(60))
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True, nullable=False
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=utcnow, nullable=False
+    )
 
-    application: Mapped[Application] = relationship(back_populates="events")
+    job: Mapped[Job] = relationship()
+    resume: Mapped[Resume] = relationship()
 
 
 class RefreshToken(Base):
@@ -257,49 +272,5 @@ class RefreshToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-
-
-class PushSubscription(Base):
-    """One row per browser/device that granted notification permission.
-
-    Push is an enhancement layered on top of email, not a replacement: on iOS
-    it only works once the PWA is installed to the home screen (16.4+), so a
-    user may well have zero of these and must still get the digest.
-    """
-
-    __tablename__ = "push_subscriptions"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    # The push service URL is the unique identity of a subscription.
-    endpoint: Mapped[str] = mapped_column(String(1024), unique=True, nullable=False)
-    p256dh: Mapped[str] = mapped_column(String(255), nullable=False)
-    auth: Mapped[str] = mapped_column(String(255), nullable=False)
-    user_agent: Mapped[str | None] = mapped_column(String(255))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-
-    user: Mapped[User] = relationship()
-
-
-class NotifiedJob(Base):
-    """One row per (user, job) already emailed, so digests never repeat a listing."""
-
-    __tablename__ = "notified_jobs"
-    __table_args__ = (UniqueConstraint("user_id", "job_id", name="uq_notified_user_job"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    job_id: Mapped[int] = mapped_column(
-        ForeignKey("jobs.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    sent_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

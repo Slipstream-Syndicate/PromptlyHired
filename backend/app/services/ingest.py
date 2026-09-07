@@ -1,6 +1,6 @@
 """Persist normalised listings, deduped across API sources.
 
-Companies collapse on a normalised name so one employer means one Follow.
+Companies collapse on a normalised name so one employer is one row.
 Jobs collapse on (source_api, external_id) so re-running a search does not
 create duplicate rows or re-trigger notifications.
 """

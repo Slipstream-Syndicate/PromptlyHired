@@ -6,7 +6,6 @@ and fail silently at the moment you need them. This connects to each service for
 real and reports what happened.
 
     python -m app.tasks doctor
-    python -m app.tasks doctor --email you@example.com   # also sends a test email
 """
 
 from __future__ import annotations
@@ -80,46 +79,23 @@ def check_adzuna() -> tuple[str, str, str]:
         return _line(FAIL, "Adzuna", str(exc)[:200])
 
 
-def check_email(send_to: str | None) -> tuple[str, str, str]:
-    if not settings.email_enabled:
+
+def check_claude() -> tuple[str, str, str]:
+    """Make a real (tiny) call - a key can be present, malformed, and unbilled."""
+    if not settings.ai_enabled:
         return _line(
             FAIL if settings.is_production else SKIP,
-            "Email (SMTP)",
-            "SMTP_HOST unset - digests and reminders are only logged, never sent",
+            "Claude API",
+            "ANTHROPIC_API_KEY unset - resume analysis, matching and generation are all off",
         )
-    if not send_to:
-        return _line(
-            OK, "Email (SMTP)", f"configured ({settings.smtp_host}); "
-            "re-run with --email you@example.com to send a real test"
-        )
-
-    from app.services.email import send_email
-
-    sent = send_email(
-        send_to,
-        "JobTrail: SMTP is working",
-        "If you are reading this, digests and follow-up reminders will reach you.",
-        "<p>If you are reading this, digests and follow-up reminders will reach you.</p>",
-    )
-    if sent:
-        return _line(OK, "Email (SMTP)", f"test email delivered to {send_to}")
-    return _line(FAIL, "Email (SMTP)", "send failed - check credentials and sender verification")
-
-
-def check_push() -> tuple[str, str, str]:
-    if not settings.push_enabled:
-        return _line(SKIP, "Web push", "VAPID keys unset - push disabled (email still works)")
-    # A malformed key only surfaces when a real push is attempted, so validate shape.
-    import base64
-
     try:
-        raw = settings.vapid_public_key + "=" * (-len(settings.vapid_public_key) % 4)
-        decoded = base64.urlsafe_b64decode(raw)
-        if len(decoded) != 65 or decoded[0] != 4:
-            return _line(FAIL, "Web push", "VAPID_PUBLIC_KEY is not an uncompressed P-256 point")
-        return _line(OK, "Web push", "VAPID keypair looks valid")
+        from app.services.ai import ping
+
+        model = ping()
+        return _line(OK, "Claude API", f"reachable, responded as {model}")
     except Exception as exc:  # noqa: BLE001
-        return _line(FAIL, "Web push", f"VAPID_PUBLIC_KEY is not valid base64url ({exc})")
+        return _line(FAIL, "Claude API", str(exc)[:200])
+
 
 
 def check_media_storage() -> tuple[str, str, str]:
@@ -152,15 +128,14 @@ def check_frontend_urls() -> tuple[str, str, str]:
     return _line(SKIP, "Frontend URLs", "development mode - production checks not applied")
 
 
-def run(send_to: str | None = None) -> int:
+def run() -> int:
     results = [
         check_database(),
         check_migrations(),
         check_frontend_urls(),
         check_job_source(),
         check_adzuna(),
-        check_email(send_to),
-        check_push(),
+        check_claude(),
         check_media_storage(),
     ]
 

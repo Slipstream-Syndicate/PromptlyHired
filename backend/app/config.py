@@ -41,43 +41,36 @@ class Settings(BaseSettings):
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
+    app_base_url: str = "http://localhost:5173"
 
-    # One market setting for every job source (see _ADZUNA_COUNTRY_ALIASES).
+    # --- Job sources ---
+    # One market setting for every source (see _ADZUNA_COUNTRY_ALIASES).
     job_country: str = "us"
-
     rapidapi_key: str = ""
     jsearch_host: str = "jsearch.p.rapidapi.com"
     # Serve identical searches from memory for this long. The free plan is
     # ~200 calls/month, and building a UI means re-running the same search
     # constantly; 0 disables the cache.
     jsearch_cache_ttl_minutes: int = 15
-    # Each digest run costs one upstream call per followed company.
-    digest_max_companies: int = 5
-
-    # Adzuna: secondary job source for broader coverage. Unset = disabled,
-    # and JSearch alone still serves the feed.
+    # Optional secondary source. Unset = JSearch alone still serves the feed.
     adzuna_app_id: str = ""
     adzuna_app_key: str = ""
 
-    # Follow-up reminders: nudge about applications that have gone quiet.
-    follow_up_after_days: int = 14
-    reminder_repeat_days: int = 7
+    # --- Claude API ---
+    # Every call is server-side; the key never reaches the browser.
+    anthropic_api_key: str = ""
+    claude_model: str = "claude-opus-5"
+    # Effort is the main cost/quality dial. Extraction and scoring produce
+    # constrained JSON and do not need deep reasoning; drafting a document does.
+    ai_effort_extraction: str = "medium"
+    ai_effort_match: str = "medium"
+    ai_effort_generation: str = "high"
+    # A scoring endpoint without a limit is a way to spend money fast.
+    ai_calls_per_hour: int = 60
 
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_from: str = "JobTrail <no-reply@jobtrail.app>"
-    app_base_url: str = "http://localhost:5173"
-
-    # Web push. Email stays the reliable channel; push is the enhancement, so
-    # an unset keypair disables push without breaking notifications.
-    vapid_private_key: str = ""
-    vapid_public_key: str = ""
-    vapid_subject: str = "mailto:admin@example.com"
-
-    # Profile pictures. Local disk is dev-only: Render/Railway wipe it on every
-    # redeploy, so deployments need an S3-compatible bucket (Cloudflare R2).
+    # --- Uploads (resumes and profile pictures) ---
+    # Local disk is dev-only: Render/Railway wipe it on every redeploy, so
+    # deployments need an S3-compatible bucket (Cloudflare R2).
     media_storage: str = "local"
     media_local_dir: str = "media"
     s3_endpoint_url: str = ""
@@ -87,6 +80,7 @@ class Settings(BaseSettings):
     s3_public_base_url: str = ""
     s3_region: str = "auto"
     max_upload_bytes: int = 5 * 1024 * 1024
+    max_resume_bytes: int = 10 * 1024 * 1024
     avatar_max_px: int = 512
 
     # Shared rate-limit store. Without it the limiter is per-process, so more
@@ -123,16 +117,12 @@ class Settings(BaseSettings):
         return _ADZUNA_COUNTRY_ALIASES.get(c, c)
 
     @property
-    def push_enabled(self) -> bool:
-        return bool(self.vapid_private_key and self.vapid_public_key)
+    def ai_enabled(self) -> bool:
+        return bool(self.anthropic_api_key)
 
     @property
     def adzuna_enabled(self) -> bool:
         return bool(self.adzuna_app_id and self.adzuna_app_key)
-
-    @property
-    def email_enabled(self) -> bool:
-        return bool(self.smtp_host)
 
     @property
     def uses_s3(self) -> bool:
@@ -147,8 +137,7 @@ class Settings(BaseSettings):
             "env": self.env,
             "live_job_listings": bool(self.rapidapi_key),
             "secondary_source_adzuna": self.adzuna_enabled,
-            "email_notifications": self.email_enabled,
-            "web_push": self.push_enabled,
+            "ai_features": self.ai_enabled,
             "durable_media_storage": self.uses_s3,
             "shared_rate_limit_store": bool(self.redis_url),
             "job_country": self.job_country,
@@ -168,8 +157,10 @@ class Settings(BaseSettings):
             problems.append("CORS_ORIGINS must list your deployed frontend origin.")
         if any(o == "*" for o in self.cors_origins):
             problems.append('CORS_ORIGINS must not be "*".')
-        if any(o.startswith("http://") and "localhost" not in o and "127.0.0.1" not in o
-               for o in self.cors_origins):
+        if any(
+            o.startswith("http://") and "localhost" not in o and "127.0.0.1" not in o
+            for o in self.cors_origins
+        ):
             problems.append("CORS_ORIGINS must use https:// for a deployed frontend.")
         if self.app_base_url.startswith("http://") and "localhost" not in self.app_base_url:
             problems.append("APP_BASE_URL must be the https:// URL of your frontend.")
@@ -182,22 +173,20 @@ class Settings(BaseSettings):
         warnings: list[str] = []
         if not self.uses_s3:
             warnings.append(
-                "MEDIA_STORAGE is not 's3': profile pictures are written to local disk "
-                "and WILL be deleted on the next redeploy. Configure Cloudflare R2."
+                "MEDIA_STORAGE is not 's3': resumes and profile pictures are written to "
+                "local disk and WILL be deleted on the next redeploy. Configure Cloudflare R2."
             )
-        if not self.email_enabled:
+        if not self.ai_enabled:
             warnings.append(
-                "SMTP_HOST is unset: digest and reminder emails will be logged, not sent. "
-                "Email is the baseline notification channel."
+                "ANTHROPIC_API_KEY is unset: resume analysis, match scoring and document "
+                "generation are all disabled. That is the core of the product."
             )
         if not self.rapidapi_key:
             warnings.append("RAPIDAPI_KEY is unset: the feed will serve sample listings.")
-        if not self.push_enabled:
-            warnings.append("VAPID keys unset: web push is disabled (email still works).")
         if not self.redis_url:
             warnings.append(
-                "REDIS_URL is unset: auth rate limiting is per-process, so it is only "
-                "accurate on a single instance with a single worker."
+                "REDIS_URL is unset: rate limiting is per-process, so it is only accurate "
+                "on a single instance with a single worker."
             )
         return warnings
 

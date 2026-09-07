@@ -12,7 +12,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.models import ApplicationStatus, JobType
+from app.models import DocumentKind, JobType
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -27,6 +27,29 @@ def clean_text(value: str | None) -> str | None:
         return None
     cleaned = _CONTROL_CHARS.sub("", value).strip()
     return cleaned or None
+
+
+def clean_list(values: list[str] | None, max_items: int = 60, max_len: int = 120) -> list[str]:
+    """Normalise an AI- or user-supplied string list.
+
+    Deduplicates case-insensitively while preserving order, so an extraction
+    returning both "Python" and "python" yields one entry.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in (values or [])[: max_items * 3]:
+        cleaned = clean_text(str(raw))
+        if not cleaned:
+            continue
+        cleaned = cleaned[:max_len]
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+        if len(out) >= max_items:
+            break
+    return out
 
 
 # --- Auth ---------------------------------------------------------------
@@ -63,7 +86,7 @@ class TokenPair(BaseModel):
     expires_in: int
 
 
-# --- Profile & preferences ----------------------------------------------
+# --- Profile ------------------------------------------------------------
 
 
 class UserOut(BaseModel):
@@ -86,33 +109,55 @@ class UserUpdate(BaseModel):
         return clean_text(v)
 
 
-class PreferencesIn(BaseModel):
-    """Same field set the homepage search filters use - one source of truth."""
-
-    keywords: str | None = Field(default=None, max_length=255)
-    location: str | None = Field(default=None, max_length=255)
-    salary_min: int | None = Field(default=None, ge=0, le=10_000_000)
-    salary_max: int | None = Field(default=None, ge=0, le=10_000_000)
-    job_type: JobType | None = None
-
-    @field_validator("keywords", "location")
-    @classmethod
-    def _clean(cls, v: str | None) -> str | None:
-        return clean_text(v)
-
-    @field_validator("salary_max")
-    @classmethod
-    def _check_range(cls, v: int | None, info):
-        smin = info.data.get("salary_min")
-        if v is not None and smin is not None and v < smin:
-            raise ValueError("salary_max must be greater than or equal to salary_min")
-        return v
+# --- Resume & skill profile ---------------------------------------------
 
 
-class PreferencesOut(PreferencesIn):
+class SkillProfileOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    updated_at: datetime | None = None
+    id: int
+    skills: list[str]
+    job_titles: list[str]
+    domains: list[str]
+    locations: list[str]
+    seniority: str | None = None
+    years_experience: float | None = None
+    summary: str | None = None
+    edited_by_user: bool = False
+    generated_at: datetime
+
+
+class SkillProfileUpdate(BaseModel):
+    """The user's own corrections. Extraction is a starting point, not truth."""
+
+    skills: list[str] | None = None
+    job_titles: list[str] | None = None
+    domains: list[str] | None = None
+    locations: list[str] | None = None
+    seniority: str | None = Field(default=None, max_length=60)
+    years_experience: float | None = Field(default=None, ge=0, le=80)
+    summary: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("skills", "job_titles", "domains", "locations")
+    @classmethod
+    def _clean_lists(cls, v: list[str] | None) -> list[str] | None:
+        return None if v is None else clean_list(v)
+
+    @field_validator("seniority", "summary")
+    @classmethod
+    def _clean_strings(cls, v: str | None) -> str | None:
+        return clean_text(v)
+
+
+class ResumeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    original_filename: str
+    content_type: str
+    is_active: bool
+    uploaded_at: datetime
+    skill_profile: SkillProfileOut | None = None
 
 
 # --- Companies & jobs ----------------------------------------------------
@@ -124,6 +169,7 @@ class CompanyOut(BaseModel):
     id: int
     name: str
     logo_url: str | None = None
+    short_description: str | None = None
 
 
 class JobOut(BaseModel):
@@ -142,30 +188,21 @@ class JobOut(BaseModel):
     # Names the destination of the outbound Apply link ("Apply on LinkedIn").
     source_publisher: str | None = None
 
-    # Per-user state, attached by the router. Save and Follow are independent:
-    # neither implies the other.
+    # Per-user state attached by the router. Deliberately no match percentage:
+    # scoring every card in a feed would cost far more than the search itself.
     is_saved: bool = False
-    is_company_followed: bool = False
-    application_status: ApplicationStatus | None = None
+    has_match: bool = False
+    has_documents: bool = False
 
 
 class SearchResponse(BaseModel):
-    """Followed-company listings are pinned above the general results."""
-
-    followed: list[JobOut]
     results: list[JobOut]
-    preferences: PreferencesOut
     source: str
-    # search-v2 paginates by opaque cursor, not page number. Pass it back as
-    # ?cursor=... to fetch the next page.
+    # search-v2 paginates by opaque cursor, not page number.
     next_cursor: str | None = None
-
-
-class FollowOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    company: CompanyOut
-    created_at: datetime
+    # Echoes the terms derived from the skill profile, so the UI can show what
+    # it searched for without the user having typed anything.
+    searched_for: str | None = None
 
 
 class SavedJobOut(BaseModel):
@@ -175,44 +212,65 @@ class SavedJobOut(BaseModel):
     saved_at: datetime
 
 
-# --- Applications --------------------------------------------------------
+# --- Match analysis ------------------------------------------------------
 
 
-class ApplicationCreate(BaseModel):
-    job_id: int
-    status: ApplicationStatus = ApplicationStatus.applied
-    applied_date: date | None = None
-    notes: str | None = Field(default=None, max_length=10_000)
-    # A job normally moves off the Saved shortlist once actually applied to.
-    unsave: bool = True
-
-    @field_validator("notes")
-    @classmethod
-    def _clean(cls, v: str | None) -> str | None:
-        return clean_text(v)
-
-
-class ApplicationUpdate(BaseModel):
-    status: ApplicationStatus | None = None
-    applied_date: date | None = None
-    notes: str | None = Field(default=None, max_length=10_000)
-
-    @field_validator("notes")
-    @classmethod
-    def _clean(cls, v: str | None) -> str | None:
-        return clean_text(v)
-
-
-class ApplicationOut(BaseModel):
+class JobMatchOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    job_id: int
+    resume_id: int
+    match_percentage: int
+    requirements_met: list[str]
+    requirements_missing: list[str]
+    rationale: str | None = None
+    generated_at: datetime
+
+
+class JobDetailOut(BaseModel):
     job: JobOut
-    status: ApplicationStatus
-    applied_date: date
-    status_updated_at: datetime
-    notes: str | None = None
-    # Surfaced on the Applications page so a quiet application is visible
-    # without opening the analytics view.
-    needs_follow_up: bool = False
-    days_since_update: int = 0
+    match: JobMatchOut | None = None
+    documents: list[GeneratedDocumentOut] = Field(default_factory=list)
+
+
+# --- Generated documents -------------------------------------------------
+
+
+class GeneratedDocumentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    job_id: int
+    resume_id: int
+    kind: DocumentKind
+    content: dict
+    edited_content: dict | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class DocumentGenerateRequest(BaseModel):
+    kind: DocumentKind
+    # Optional user steering, e.g. "emphasise my backend work".
+    instructions: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("instructions")
+    @classmethod
+    def _clean(cls, v: str | None) -> str | None:
+        return clean_text(v)
+
+
+class DocumentUpdate(BaseModel):
+    """The user's edits. Never overwrites the original AI output."""
+
+    edited_content: dict
+
+
+class HistoryEntryOut(BaseModel):
+    job: JobOut
+    documents: list[GeneratedDocumentOut]
+    last_generated_at: datetime
+
+
+JobDetailOut.model_rebuild()

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
-from sqlalchemy import select
 
 from app.config import settings
 from app.deps import CurrentUser, DbSession
-from app.models import JobPreferences, User
-from app.schemas import PreferencesIn, PreferencesOut, UserOut, UserUpdate
+from app.models import User
+from app.schemas import UserOut, UserUpdate
 from app.services.storage import (
     ALLOWED_CONTENT_TYPES,
     UploadError,
@@ -15,16 +14,6 @@ from app.services.storage import (
 )
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
-
-
-def _prefs_for(db, user: User) -> JobPreferences:
-    prefs = db.scalar(select(JobPreferences).where(JobPreferences.user_id == user.id))
-    if prefs is None:
-        prefs = JobPreferences(user_id=user.id)
-        db.add(prefs)
-        db.commit()
-        db.refresh(prefs)
-    return prefs
 
 
 @router.get("", response_model=UserOut)
@@ -42,27 +31,6 @@ def update_profile(payload: UserUpdate, user: CurrentUser, db: DbSession) -> Use
     db.commit()
     db.refresh(user)
     return user
-
-
-@router.get("/preferences", response_model=PreferencesOut)
-def get_preferences(user: CurrentUser, db: DbSession) -> JobPreferences:
-    """The same fields the homepage search filters read and write."""
-    return _prefs_for(db, user)
-
-
-@router.put("/preferences", response_model=PreferencesOut)
-def replace_preferences(
-    payload: PreferencesIn, user: CurrentUser, db: DbSession
-) -> JobPreferences:
-    prefs = _prefs_for(db, user)
-    prefs.keywords = payload.keywords
-    prefs.location = payload.location
-    prefs.salary_min = payload.salary_min
-    prefs.salary_max = payload.salary_max
-    prefs.job_type = payload.job_type
-    db.commit()
-    db.refresh(prefs)
-    return prefs
 
 
 @router.post("/picture", response_model=UserOut)

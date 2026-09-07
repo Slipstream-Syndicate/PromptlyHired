@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { isIos, isStandalone } from '../api/push'
+import { isIos, isStandalone } from '../api/platform'
 
 const DISMISSED_KEY = 'jobtrail.install_dismissed'
 

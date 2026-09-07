@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.deps import CurrentUser, DbSession
-from app.models import JobPreferences, RefreshToken, User
+from app.models import RefreshToken, User
 from app.rate_limit import login_rate_limit, refresh_rate_limit, signup_rate_limit
 from app.schemas import RefreshRequest, TokenPair, UserCreate, UserLogin, UserOut
 from app.security import (
@@ -52,10 +52,6 @@ def signup(payload: UserCreate, db: DbSession) -> TokenPair:
 
     user = User(email=email, password_hash=hash_password(payload.password), name=payload.name)
     db.add(user)
-    db.flush()
-    # Empty preferences up front so the profile and homepage filters always
-    # have a row to read and write.
-    db.add(JobPreferences(user_id=user.id))
     db.commit()
     db.refresh(user)
     return _issue_tokens(db, user)

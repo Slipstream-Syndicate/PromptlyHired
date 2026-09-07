@@ -1,30 +1,57 @@
+"""Job feed and job detail.
+
+The feed is driven by the user's SkillProfile - they never have to invent
+keywords. Filters remain available to narrow it, but are transient query
+parameters rather than stored preferences.
+"""
+
 from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.deps import CurrentUser, DbSession
-from app.models import Follow, Job, JobPreferences, JobType
-from app.schemas import JobOut, PreferencesOut, SearchResponse
-from app.services import sources
+from app.models import GeneratedDocument, Job, JobMatch, JobType, Resume, SkillProfile
+from app.rate_limit import ai_rate_limit
+from app.routers.resumes import active_resume, require_active_resume
+from app.schemas import (
+    GeneratedDocumentOut,
+    JobDetailOut,
+    JobMatchOut,
+    JobOut,
+    SearchResponse,
+)
+from app.services import ai, sources
 from app.services.ingest import upsert_jobs
 from app.services.jsearch import JobSourceError, NormalizedJob
 from app.services.user_state import decorate_jobs
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
+# How many extracted job titles to fold into one search query. All of them would
+# produce an incoherent query that matches nothing.
+MAX_TITLES_IN_QUERY = 3
 
-def _get_or_create_prefs(db, user) -> JobPreferences:
-    prefs = db.scalar(select(JobPreferences).where(JobPreferences.user_id == user.id))
-    if prefs is None:
-        prefs = JobPreferences(user_id=user.id)
-        db.add(prefs)
-        db.commit()
-        db.refresh(prefs)
-    return prefs
+
+def build_query(profile: SkillProfile | None, keywords: str | None) -> str | None:
+    """Turn the skill profile into search terms.
+
+    Titles beat raw skills: job boards index adverts by role name, so searching
+    "Backend Engineer" returns far better results than "Python, Docker, AWS".
+    """
+    if keywords:
+        return keywords
+    if profile is None:
+        return None
+    titles = [t for t in (profile.job_titles or []) if t][:MAX_TITLES_IN_QUERY]
+    if titles:
+        return " OR ".join(titles) if len(titles) > 1 else titles[0]
+    skills = [s for s in (profile.skills or []) if s][:4]
+    return " ".join(skills) or None
 
 
 def _salary_matches(job: NormalizedJob, floor: int | None, ceiling: int | None) -> bool:
@@ -50,37 +77,22 @@ async def search_jobs(
     salary_max: Annotated[int | None, Query(ge=0, le=10_000_000)] = None,
     job_type: JobType | None = None,
     cursor: Annotated[str | None, Query(max_length=4096)] = None,
-    use_saved_preferences: Annotated[
-        bool,
-        Query(
-            description=(
-                "True on the login auto-search: run with the stored preferences. "
-                "False when the user submits the filter form, whose values then "
-                "become the new stored preferences."
-            )
-        ),
-    ] = False,
 ) -> SearchResponse:
-    prefs = _get_or_create_prefs(db, user)
+    resume = active_resume(db, user)
+    profile = resume.skill_profile if resume else None
 
-    if use_saved_preferences:
-        keywords, location = prefs.keywords, prefs.location
-        salary_min, salary_max = prefs.salary_min, prefs.salary_max
-        job_type = prefs.job_type
-    else:
-        # A submitted filter form is the whole filter state, so an omitted field
-        # means cleared. Preferences and search filters stay one source of truth.
-        prefs.keywords = keywords
-        prefs.location = location
-        prefs.salary_min = salary_min
-        prefs.salary_max = salary_max
-        prefs.job_type = job_type
-        db.commit()
-        db.refresh(prefs)
+    query = build_query(profile, keywords)
+    if not query:
+        # No resume and no keywords: nothing sensible to search for.
+        return SearchResponse(results=[], source="none", searched_for=None)
+
+    # Fall back to a location the resume mentions when the user has not filtered.
+    if not location and profile and profile.locations:
+        location = profile.locations[0]
 
     try:
         listings, source, next_cursor = await sources.search(
-            keywords, location, job_type, salary_min, cursor
+            query, location, job_type, salary_min, cursor
         )
     except JobSourceError as exc:
         raise HTTPException(
@@ -91,28 +103,113 @@ async def search_jobs(
     rows = upsert_jobs(db, listings)
     db.commit()
 
-    followed_company_ids = set(
-        db.scalars(select(Follow.company_id).where(Follow.user_id == user.id))
-    )
-
-    # "New from companies you follow" is pinned above the general results.
-    followed_rows = [r for r in rows if r.company_id in followed_company_ids]
-    general_rows = [r for r in rows if r.company_id not in followed_company_ids]
-
     return SearchResponse(
-        followed=decorate_jobs(db, user, followed_rows),
-        results=decorate_jobs(db, user, general_rows),
-        preferences=PreferencesOut.model_validate(prefs),
+        results=decorate_jobs(db, user, rows),
         source=source,
         next_cursor=next_cursor,
+        searched_for=query,
     )
 
 
-@router.get("/{job_id}", response_model=JobOut)
-def get_job(job_id: int, user: CurrentUser, db: DbSession) -> JobOut:
+def _load_job(db, job_id: int) -> Job:
     job = db.scalar(
         select(Job).options(selectinload(Job.company)).where(Job.id == job_id)
     )
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
-    return decorate_jobs(db, user, [job])[0]
+    return job
+
+
+@router.get("/{job_id}", response_model=JobDetailOut)
+def get_job(job_id: int, user: CurrentUser, db: DbSession) -> JobDetailOut:
+    """Job detail, including a cached match analysis if one already exists.
+
+    Deliberately does NOT compute a match - scoring costs an API call, so it is
+    a separate explicit POST.
+    """
+    job = _load_job(db, job_id)
+    resume = active_resume(db, user)
+
+    match = None
+    if resume is not None:
+        match = db.scalar(
+            select(JobMatch).where(
+                JobMatch.user_id == user.id,
+                JobMatch.job_id == job_id,
+                JobMatch.resume_id == resume.id,
+            )
+        )
+
+    documents = list(
+        db.scalars(
+            select(GeneratedDocument)
+            .where(
+                GeneratedDocument.user_id == user.id,
+                GeneratedDocument.job_id == job_id,
+            )
+            .order_by(GeneratedDocument.created_at.desc())
+        )
+    )
+
+    return JobDetailOut(
+        job=decorate_jobs(db, user, [job])[0],
+        match=JobMatchOut.model_validate(match) if match else None,
+        documents=[GeneratedDocumentOut.model_validate(d) for d in documents],
+    )
+
+
+@router.post(
+    "/{job_id}/match",
+    response_model=JobMatchOut,
+    dependencies=[Depends(ai_rate_limit)],
+)
+def analyze_job(
+    job_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    refresh: Annotated[bool, Query(description="Recompute even if cached")] = False,
+) -> JobMatch:
+    """Score this job against the active resume.
+
+    Cached per (user, job, resume): reopening a card is free, and a new resume
+    produces a new analysis without destroying the old one.
+    """
+    job = _load_job(db, job_id)
+    resume = require_active_resume(db, user)
+
+    existing = db.scalar(
+        select(JobMatch).where(
+            JobMatch.user_id == user.id,
+            JobMatch.job_id == job_id,
+            JobMatch.resume_id == resume.id,
+        )
+    )
+    if existing is not None and not refresh:
+        return existing
+
+    try:
+        analysis = ai.analyze_match(
+            resume.extracted_text or "",
+            job.title,
+            job.company.name,
+            job.description or "",
+        )
+    except ai.AIUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    except ai.AIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
+
+    row = existing or JobMatch(user_id=user.id, job_id=job_id, resume_id=resume.id)
+    row.match_percentage = analysis.match_percentage
+    row.requirements_met = analysis.requirements_met[:40]
+    row.requirements_missing = analysis.requirements_missing[:40]
+    row.rationale = analysis.rationale
+    row.model_used = settings.claude_model
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row

@@ -133,7 +133,7 @@ def test_development_never_blocks():
     assert Settings(env="development").production_blockers() == []
 
 
-def test_production_warns_about_ephemeral_media_and_missing_email():
+def test_production_warns_about_ephemeral_media_and_missing_ai():
     s = Settings(
         env="production",
         jwt_secret="x" * 48,
@@ -142,7 +142,7 @@ def test_production_warns_about_ephemeral_media_and_missing_email():
     )
     warnings = " ".join(s.production_warnings())
     assert "MEDIA_STORAGE" in warnings
-    assert "SMTP_HOST" in warnings
+    assert "ANTHROPIC_API_KEY" in warnings
 
 
 def test_s3_config_silences_the_media_warning():

@@ -1,7 +1,7 @@
 """Attach per-user state to job listings in one batch, not per row.
 
-Saved and Followed are independent flags: saving a job never follows its
-company, and following a company never saves its jobs.
+Deliberately does NOT attach a match percentage: scoring is an API call per job,
+so the feed shows only whether an analysis already exists.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Application, Company, Follow, Job, SavedJob, User
+from app.models import Company, GeneratedDocument, Job, JobMatch, SavedJob, User
 from app.schemas import CompanyOut, JobOut
 
 
@@ -30,21 +30,21 @@ def decorate_jobs(db: Session, user: User, jobs: Iterable[Job]) -> list[JobOut]:
             )
         )
     )
-    followed_ids = set(
+    matched_ids = set(
         db.scalars(
-            select(Follow.company_id).where(
-                Follow.user_id == user.id, Follow.company_id.in_(company_ids)
+            select(JobMatch.job_id).where(
+                JobMatch.user_id == user.id, JobMatch.job_id.in_(job_ids)
             )
         )
     )
-    statuses = {
-        job_id: status
-        for job_id, status in db.execute(
-            select(Application.job_id, Application.status).where(
-                Application.user_id == user.id, Application.job_id.in_(job_ids)
+    documented_ids = set(
+        db.scalars(
+            select(GeneratedDocument.job_id).where(
+                GeneratedDocument.user_id == user.id,
+                GeneratedDocument.job_id.in_(job_ids),
             )
         )
-    }
+    )
 
     companies = {
         c.id: c for c in db.scalars(select(Company).where(Company.id.in_(company_ids)))
@@ -64,8 +64,8 @@ def decorate_jobs(db: Session, user: User, jobs: Iterable[Job]) -> list[JobOut]:
             source_api=job.source_api,
             source_publisher=job.source_publisher,
             is_saved=job.id in saved_ids,
-            is_company_followed=job.company_id in followed_ids,
-            application_status=statuses.get(job.id),
+            has_match=job.id in matched_ids,
+            has_documents=job.id in documented_ids,
         )
         for job in jobs
     ]

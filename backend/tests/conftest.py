@@ -28,7 +28,7 @@ os.environ["DATABASE_URL"] = ADMIN_URL.rsplit("/", 1)[0] + f"/{TEST_DB}"
 os.environ["RAPIDAPI_KEY"] = ""
 os.environ["ADZUNA_APP_ID"] = ""
 os.environ["ADZUNA_APP_KEY"] = ""
-os.environ["SMTP_HOST"] = ""
+os.environ["ANTHROPIC_API_KEY"] = ""
 os.environ["REDIS_URL"] = ""
 os.environ.setdefault("JWT_SECRET", "test-secret-not-used-in-production-abcdefgh")
 
@@ -113,5 +113,126 @@ def auth(client):
             email,
             tokens,
         )
+
+    return _make
+
+
+# --- Resume + AI fixtures -------------------------------------------------
+
+SAMPLE_RESUME = """
+Alex Morgan
+alex.morgan@example.com | London, UK
+
+SUMMARY
+Backend engineer with six years building Python services at scale.
+
+EXPERIENCE
+Senior Backend Engineer, Monzo (2021-2026)
+- Designed and shipped payment reconciliation services in Python and PostgreSQL
+- Led migration of a monolith to event-driven services on AWS
+- Mentored three junior engineers
+
+Backend Engineer, Deliveroo (2020-2021)
+- Built order-routing APIs with FastAPI and Redis
+- Cut p99 latency by 40% through query optimisation
+
+SKILLS
+Python, FastAPI, PostgreSQL, Docker, AWS, Kubernetes, Redis
+
+EDUCATION
+BSc Computer Science, University of Manchester
+"""
+
+
+class _FakeExtraction:
+    skills = ["Python", "FastAPI", "PostgreSQL", "AWS"]
+    job_titles = ["Backend Engineer", "Senior Backend Engineer"]
+    domains = ["Fintech", "Food delivery"]
+    locations = ["London, UK"]
+    seniority = "senior"
+    years_experience = 6.0
+    summary = "Backend engineer with six years of Python experience."
+
+
+class _FakeMatch:
+    def __init__(self, pct=72):
+        self.match_percentage = pct
+        self.requirements_met = ["Python", "PostgreSQL"]
+        self.requirements_missing = ["Go", "Kafka"]
+        self.rationale = "Strong Python background; no Go or streaming experience."
+
+
+class _FakeDoc:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def model_dump(self):
+        return self._payload
+
+
+@pytest.fixture
+def ai_stub(monkeypatch):
+    """Stub every Claude call. The suite must never spend real money."""
+    from app.services import ai
+
+    calls = {"extract": 0, "match": 0, "resume": 0, "cover": 0}
+
+    def extract(text):
+        calls["extract"] += 1
+        return _FakeExtraction()
+
+    def match(resume_text, title, company, description):
+        calls["match"] += 1
+        return _FakeMatch()
+
+    def gen_resume(resume_text, title, company, description, summary="", instructions=None):
+        calls["resume"] += 1
+        return _FakeDoc({
+            "full_name": "Alex Morgan",
+            "headline": f"Backend Engineer for {company}",
+            "summary": "Six years of Python.",
+            "sections": [{"heading": "Experience", "bullets": ["Built services"]}],
+            "skills": ["Python"],
+            "instructions_seen": instructions,
+        })
+
+    def gen_cover(resume_text, title, company, description, summary="", instructions=None):
+        calls["cover"] += 1
+        return _FakeDoc({
+            "greeting": "Dear Hiring Manager,",
+            "paragraphs": [f"I am applying for {title}."],
+            "closing": "Kind regards, Alex",
+            "instructions_seen": instructions,
+        })
+
+    monkeypatch.setattr(ai, "extract_skill_profile", extract)
+    monkeypatch.setattr(ai, "analyze_match", match)
+    monkeypatch.setattr(ai, "generate_resume", gen_resume)
+    monkeypatch.setattr(ai, "generate_cover_letter", gen_cover)
+    # The routers imported the module, so patching the module attributes is
+    # enough - they call ai.<fn> rather than holding direct references.
+    return calls
+
+
+@pytest.fixture
+def with_resume(client, ai_stub):
+    """Register a user and give them an active resume + skill profile."""
+
+    def _make():
+        import uuid as _uuid
+
+        email = f"r-{_uuid.uuid4().hex[:10]}@example.com"
+        tokens = client.post(
+            "/api/auth/signup",
+            json={"email": email, "password": "correct horse battery", "name": "Alex"},
+        ).json()
+        headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+        resume = client.post(
+            "/api/resumes",
+            headers=headers,
+            files={"file": ("cv.txt", SAMPLE_RESUME.encode(), "text/plain")},
+        )
+        assert resume.status_code == 201, resume.text
+        return headers, resume.json()
 
     return _make

@@ -115,3 +115,45 @@ def delete_avatar(url: str | None) -> None:
             path.unlink(missing_ok=True)
     except Exception:  # noqa: BLE001 - cleanup must never break the request
         logger.warning("Could not delete old avatar %s", url, exc_info=True)
+
+
+def store_resume(user_id: int, raw: bytes, filename: str, content_type: str) -> str:
+    """Store an uploaded resume verbatim and return its URL.
+
+    Unlike avatars, the bytes are NOT re-encoded - a resume must stay the exact
+    file the user uploaded so they can download the original back. Safety comes
+    from never serving it as an inline document: the extension is fixed from the
+    declared type, and the content is only ever parsed, never executed.
+    """
+    ext = {
+        "application/pdf": "pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+        "text/plain": "txt",
+    }.get(content_type, "bin")
+    key = f"resumes/{user_id}/{uuid.uuid4().hex}.{ext}"
+
+    if settings.uses_s3:
+        base = settings.s3_public_base_url.rstrip("/")
+        if not base:
+            raise UploadError("S3_PUBLIC_BASE_URL is not configured.")
+        _s3_client().put_object(
+            Bucket=settings.s3_bucket,
+            Key=key,
+            Body=raw,
+            ContentType=content_type,
+            # Force a download rather than letting a browser render an uploaded
+            # file in the bucket's origin.
+            ContentDisposition=f'attachment; filename="{Path(filename).name}"',
+        )
+        return f"{base}/{key}"
+
+    path = Path(settings.media_local_dir) / key
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
+    logger.info("Stored resume on local disk at %s (dev only)", path)
+    return f"/media/{key}"
+
+
+def delete_file(url: str | None) -> None:
+    """Best-effort cleanup for any stored object; never fatal."""
+    delete_avatar(url)
