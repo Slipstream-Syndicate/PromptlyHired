@@ -144,3 +144,44 @@ def test_docx_tables_are_extracted(ai_stub):
     )
     assert "Monzo" in text
     assert "2021-2026" in text
+
+
+def test_delete_resume_removes_derived_data(client, with_resume, ai_stub):
+    """A CV is sensitive data - the user must be able to remove it, and
+    everything derived from it goes too."""
+    headers, resume = with_resume()
+    job = client.get("/api/jobs/search", headers=headers).json()["results"][0]
+    client.post(f"/api/jobs/{job['id']}/match", headers=headers)
+    client.post(f"/api/jobs/{job['id']}/documents", headers=headers, json={"kind": "resume"})
+    assert client.get("/api/history", headers=headers).json()
+
+    assert client.delete(f"/api/resumes/{resume['id']}", headers=headers).status_code == 204
+    assert client.get("/api/resumes/active", headers=headers).json() is None
+    assert client.get("/api/history", headers=headers).json() == []
+
+
+def test_deleting_the_active_resume_promotes_the_previous_one(client, with_resume, ai_stub):
+    headers, first = with_resume()
+    second = client.post(
+        "/api/resumes",
+        headers=headers,
+        files={"file": ("cv2.txt", SAMPLE_RESUME.encode(), "text/plain")},
+    ).json()
+
+    client.delete(f"/api/resumes/{second['id']}", headers=headers)
+    assert client.get("/api/resumes/active", headers=headers).json()["id"] == first["id"]
+
+
+def test_cannot_delete_another_users_resume(client, with_resume, auth):
+    _, resume = with_resume()
+    other, _, _ = auth()
+    client.delete(f"/api/resumes/{resume['id']}", headers=other)
+    # Still there for its owner.
+    assert client.get(f"/api/resumes", headers=other).json() == []
+
+
+def test_resume_file_url_is_returned(with_resume):
+    """Stored verbatim so the user can get their original back - which only
+    works if the URL actually reaches them."""
+    _, resume = with_resume()
+    assert resume["file_url"]

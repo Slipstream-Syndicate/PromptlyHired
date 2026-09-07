@@ -11,16 +11,6 @@ from __future__ import annotations
 import sys
 
 
-def _flag_value(name: str) -> str | None:
-    """Read `--name value` or `--name=value` from argv."""
-    for i, arg in enumerate(sys.argv):
-        if arg == name and i + 1 < len(sys.argv):
-            return sys.argv[i + 1]
-        if arg.startswith(f"{name}="):
-            return arg.split("=", 1)[1]
-    return None
-
-
 def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     command = args[0] if args else "doctor"

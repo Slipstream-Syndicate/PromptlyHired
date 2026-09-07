@@ -153,6 +153,7 @@ class ResumeOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    file_url: str
     original_filename: str
     content_type: str
     is_active: bool

@@ -1,0 +1,22 @@
+
+Alex Morgan
+alex.morgan@example.com | London, UK
+
+SUMMARY
+Backend engineer with six years building Python services at scale.
+
+EXPERIENCE
+Senior Backend Engineer, Monzo (2021-2026)
+- Designed and shipped payment reconciliation services in Python and PostgreSQL
+- Led migration of a monolith to event-driven services on AWS
+- Mentored three junior engineers
+
+Backend Engineer, Deliveroo (2020-2021)
+- Built order-routing APIs with FastAPI and Redis
+- Cut p99 latency by 40% through query optimisation
+
+SKILLS
+Python, FastAPI, PostgreSQL, Docker, AWS, Kubernetes, Redis
+
+EDUCATION
+BSc Computer Science, University of Manchester

@@ -9,7 +9,7 @@ from app.schemas import UserOut, UserUpdate
 from app.services.storage import (
     ALLOWED_CONTENT_TYPES,
     UploadError,
-    delete_avatar,
+    delete_stored_file,
     store_avatar,
 )
 
@@ -68,7 +68,7 @@ async def upload_picture(
     user.profile_picture_url = url
     db.commit()
     db.refresh(user)
-    delete_avatar(previous)
+    delete_stored_file(previous)
     return user
 
 
@@ -78,5 +78,5 @@ def remove_picture(user: CurrentUser, db: DbSession) -> User:
     user.profile_picture_url = None
     db.commit()
     db.refresh(user)
-    delete_avatar(previous)
+    delete_stored_file(previous)
     return user

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -12,7 +12,7 @@ from app.models import Resume, SkillProfile, User
 from app.rate_limit import ai_rate_limit
 from app.schemas import ResumeOut, SkillProfileOut, SkillProfileUpdate, clean_list, clean_text
 from app.services import ai, resume_text
-from app.services.storage import UploadError, store_resume
+from app.services.storage import UploadError, delete_stored_file, store_resume
 
 router = APIRouter(prefix="/api/resumes", tags=["resumes"])
 
@@ -206,3 +206,38 @@ def update_skill_profile(
     db.commit()
     db.refresh(profile)
     return profile
+
+
+@router.delete("/{resume_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_resume(resume_id: int, user: CurrentUser, db: DbSession) -> Response:
+    """Delete a resume and the file behind it.
+
+    A CV is sensitive personal data, so the user must be able to remove it. This
+    cascades to the skill profile, match analyses and generated documents built
+    from it - all of them are derived from the resume and would be orphaned or
+    misleading without it.
+    """
+    resume = db.scalar(
+        select(Resume).where(Resume.id == resume_id, Resume.user_id == user.id)
+    )
+    if resume is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    file_url = resume.file_url
+    was_active = resume.is_active
+    db.delete(resume)
+    db.flush()
+
+    # Promote the most recent remaining resume so the feed keeps working.
+    if was_active:
+        fallback = db.scalar(
+            select(Resume)
+            .where(Resume.user_id == user.id)
+            .order_by(Resume.uploaded_at.desc())
+        )
+        if fallback is not None:
+            fallback.is_active = True
+
+    db.commit()
+    delete_stored_file(file_url)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

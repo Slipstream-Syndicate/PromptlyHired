@@ -99,8 +99,8 @@ def store_avatar(user_id: int, raw: bytes) -> str:
     return f"/media/{key}"
 
 
-def delete_avatar(url: str | None) -> None:
-    """Best-effort cleanup of the previous image; never fatal."""
+def delete_stored_file(url: str | None) -> None:
+    """Best-effort cleanup of a stored object (avatar or resume); never fatal."""
     if not url:
         return
     try:
@@ -114,7 +114,7 @@ def delete_avatar(url: str | None) -> None:
             path = Path(settings.media_local_dir) / url[len("/media/") :]
             path.unlink(missing_ok=True)
     except Exception:  # noqa: BLE001 - cleanup must never break the request
-        logger.warning("Could not delete old avatar %s", url, exc_info=True)
+        logger.warning("Could not delete stored file %s", url, exc_info=True)
 
 
 def store_resume(user_id: int, raw: bytes, filename: str, content_type: str) -> str:
@@ -152,8 +152,3 @@ def store_resume(user_id: int, raw: bytes, filename: str, content_type: str) -> 
     path.write_bytes(raw)
     logger.info("Stored resume on local disk at %s (dev only)", path)
     return f"/media/{key}"
-
-
-def delete_file(url: str | None) -> None:
-    """Best-effort cleanup for any stored object; never fatal."""
-    delete_avatar(url)
