@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import ApplyLink from './ApplyLink.jsx'
+import { matchBand } from '../lib/matchBand.js'
 
 const JOB_TYPE_LABELS = {
   full_time: 'Full-time',
@@ -37,13 +38,26 @@ export default function JobCard({ job, onToggleSave, busy }) {
             <p className="job-blurb">{job.company.short_description}</p>
           )}
         </div>
+
+        {/* Cached score only - rendering a card never triggers an analysis. */}
+        {job.match_percentage !== null && job.match_percentage !== undefined && (
+          <div className="card-score" data-band={matchBand(job.match_percentage).key}>
+            <span className="card-score-value">{job.match_percentage}%</span>
+            <span className="card-score-label">match</span>
+          </div>
+        )}
       </div>
 
       <div className="job-meta">
         {job.location && <span className="chip">{job.location}</span>}
         {job.job_type && <span className="chip">{JOB_TYPE_LABELS[job.job_type]}</span>}
         {job.salary_range && <span className="chip salary">{job.salary_range}</span>}
-        {job.has_match && <span className="chip analysed">✓ Analysed</span>}
+        {job.requirements_met_count != null && (
+          <span className="chip met">✓ {job.requirements_met_count} skills matched</span>
+        )}
+        {job.requirements_missing_count != null && (
+          <span className="chip missing">△ {job.requirements_missing_count} missing</span>
+        )}
         {job.has_documents && <span className="chip analysed">📄 Documents</span>}
       </div>
 

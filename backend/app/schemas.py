@@ -189,11 +189,15 @@ class JobOut(BaseModel):
     # Names the destination of the outbound Apply link ("Apply on LinkedIn").
     source_publisher: str | None = None
 
-    # Per-user state attached by the router. Deliberately no match percentage:
-    # scoring every card in a feed would cost far more than the search itself.
+    # Per-user state attached by the router. The match figures are read from
+    # the cached JobMatch row - showing them costs a database join, never an
+    # API call. They are null until the user asks for an analysis.
     is_saved: bool = False
     has_match: bool = False
     has_documents: bool = False
+    match_percentage: int | None = None
+    requirements_met_count: int | None = None
+    requirements_missing_count: int | None = None
 
 
 class SavedJobOut(BaseModel):

@@ -72,10 +72,14 @@ documents_router = read("backend/app/routers/documents.py")
 ck("history", "history derived from GeneratedDocument", "GeneratedDocument" in documents_router
    and "/history" in documents_router)
 
-head("Match scoring is on-demand, never across the feed")
+head("Match scoring is on-demand; cards show only what is already cached")
 jobs_router = read("backend/app/routers/jobs.py")
 user_state = read("backend/app/services/user_state.py")
-ck("cost", "feed cards carry no match percentage", "match_percentage" not in user_state)
+# Cards DO show a percentage - but only one read from the database. The
+# invariant that matters is that rendering never calls the model.
+ck("cost", "cards show the cached score", "match_percentage" in user_state)
+ck("cost", "rendering a card never calls the model", "ai." not in user_state)
+ck("cost", "card score is scoped to the active resume", "is_active" in user_state)
 ck("cost", "scoring is a separate explicit POST", '"/{job_id}/match"' in jobs_router)
 ck("cost", "job detail does not score", "ai.analyze_match" not in jobs_router.split("def analyze_job")[0])
 ck("cost", "match cached per (user, job, resume)", "uq_match_user_job_resume" in models)

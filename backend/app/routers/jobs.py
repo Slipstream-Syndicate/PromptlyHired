@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.deps import CurrentUser, DbSession
-from app.models import Company, GeneratedDocument, Job, JobMatch
+from app.models import Company, GeneratedDocument, Job, JobMatch, UserJob
 from app.rate_limit import ai_rate_limit
 from app.routers.resumes import active_resume, require_active_resume
 from app.schemas import (
@@ -109,6 +109,16 @@ def _store_job(db, *, title, company_name, location, description, url, publisher
     return job
 
 
+def _claim(db, user, job: Job) -> None:
+    """Record that this user added the job, so it shows on their Jobs page."""
+    existing = db.scalar(
+        select(UserJob).where(UserJob.user_id == user.id, UserJob.job_id == job.id)
+    )
+    if existing is None:
+        db.add(UserJob(user_id=user.id, job_id=job.id))
+        db.commit()
+
+
 @router.post(
     "/from-url",
     response_model=JobOut,
@@ -167,6 +177,7 @@ def add_job_from_url(payload: JobFromUrl, user: CurrentUser, db: DbSession) -> J
         url=final_url,
         publisher=job_url.publisher_for(final_url),
     )
+    _claim(db, user, job)
     return decorate_jobs(db, user, [job])[0]
 
 
@@ -199,33 +210,23 @@ def add_job_from_text(payload: JobFromText, user: CurrentUser, db: DbSession) ->
         url=url,
         publisher=job_url.publisher_for(url) if url else None,
     )
+    _claim(db, user, job)
     return decorate_jobs(db, user, [job])[0]
 
 
 @router.get("", response_model=list[JobOut])
 def list_jobs(user: CurrentUser, db: DbSession) -> list[JobOut]:
-    """Jobs this user has engaged with - saved, analysed, or written documents for.
+    """Every job this user has added, most recent first.
 
     With no feed, this is the main page's content.
     """
-    from app.models import SavedJob
-
-    ids = set(db.scalars(select(SavedJob.job_id).where(SavedJob.user_id == user.id)))
-    ids |= set(db.scalars(select(JobMatch.job_id).where(JobMatch.user_id == user.id)))
-    ids |= set(
-        db.scalars(
-            select(GeneratedDocument.job_id).where(GeneratedDocument.user_id == user.id)
-        )
-    )
-    if not ids:
-        return []
-
     jobs = list(
         db.scalars(
             select(Job)
+            .join(UserJob, UserJob.job_id == Job.id)
             .options(selectinload(Job.company))
-            .where(Job.id.in_(ids))
-            .order_by(Job.first_seen_at.desc())
+            .where(UserJob.user_id == user.id)
+            .order_by(UserJob.added_at.desc())
         )
     )
     return decorate_jobs(db, user, jobs)

@@ -1,7 +1,9 @@
-"""Attach per-user state to job listings in one batch, not per row.
+"""Attach per-user state to job cards in one batch, not per row.
 
-Deliberately does NOT attach a match percentage: scoring is an API call per job,
-so the feed shows only whether an analysis already exists.
+Includes the cached match score. Reading it is a database join; it is NEVER
+computed here. A card shows a percentage only once the user has explicitly
+asked for an analysis of that job, and the figures shown are those of their
+currently active resume.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ from collections.abc import Iterable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Company, GeneratedDocument, Job, JobMatch, SavedJob, User
+from app.models import Company, GeneratedDocument, Job, JobMatch, Resume, SavedJob, User
 from app.schemas import CompanyOut, JobOut
 
 
@@ -30,13 +32,25 @@ def decorate_jobs(db: Session, user: User, jobs: Iterable[Job]) -> list[JobOut]:
             )
         )
     )
-    matched_ids = set(
-        db.scalars(
-            select(JobMatch.job_id).where(
-                JobMatch.user_id == user.id, JobMatch.job_id.in_(job_ids)
-            )
-        )
+    # Scoped to the active resume: a match computed against an old CV should
+    # not be shown as if it described the current one.
+    active = db.scalar(
+        select(Resume.id)
+        .where(Resume.user_id == user.id, Resume.is_active.is_(True))
+        .order_by(Resume.uploaded_at.desc())
     )
+    matches = {}
+    if active is not None:
+        matches = {
+            m.job_id: m
+            for m in db.scalars(
+                select(JobMatch).where(
+                    JobMatch.user_id == user.id,
+                    JobMatch.job_id.in_(job_ids),
+                    JobMatch.resume_id == active,
+                )
+            )
+        }
     documented_ids = set(
         db.scalars(
             select(GeneratedDocument.job_id).where(
@@ -64,8 +78,17 @@ def decorate_jobs(db: Session, user: User, jobs: Iterable[Job]) -> list[JobOut]:
             source_api=job.source_api,
             source_publisher=job.source_publisher,
             is_saved=job.id in saved_ids,
-            has_match=job.id in matched_ids,
+            has_match=job.id in matches,
             has_documents=job.id in documented_ids,
+            match_percentage=(
+                matches[job.id].match_percentage if job.id in matches else None
+            ),
+            requirements_met_count=(
+                len(matches[job.id].requirements_met) if job.id in matches else None
+            ),
+            requirements_missing_count=(
+                len(matches[job.id].requirements_missing) if job.id in matches else None
+            ),
         )
         for job in jobs
     ]

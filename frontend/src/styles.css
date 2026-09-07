@@ -734,3 +734,75 @@ a.btn {
   background: var(--bg);
   margin: 12px 0;
 }
+
+/* --- Match score on cards + stat row ------------------------------------- */
+
+.card-score {
+  text-align: center;
+  flex-shrink: 0;
+  padding-left: 10px;
+}
+
+.card-score-value {
+  display: block;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.card-score-label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.card-score[data-band='strong'] .card-score-value { color: var(--good); }
+.card-score[data-band='partial'] .card-score-value { color: var(--warn); }
+.card-score[data-band='weak'] .card-score-value { color: var(--critical); }
+
+.chip.met {
+  color: var(--good);
+  border-color: color-mix(in srgb, var(--good) 35%, transparent);
+}
+
+.chip.missing {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 35%, transparent);
+}
+
+.match-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.match-stat {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  text-align: center;
+}
+
+.match-stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.match-stat-value[data-tone='met'] { color: var(--good); }
+.match-stat-value[data-tone='missing'] { color: var(--warn); }
+
+.match-stat-label {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 5px;
+  line-height: 1.3;
+}

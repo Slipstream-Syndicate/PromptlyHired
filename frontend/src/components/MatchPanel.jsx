@@ -1,3 +1,5 @@
+import { matchBand } from '../lib/matchBand.js'
+
 /**
  * Match analysis display.
  *
@@ -6,11 +8,6 @@
  * text band always accompany it, which matters because the high/low ends are a
  * green/red pair that deuteranopes cannot separate by hue.
  */
-function band(pct) {
-  if (pct >= 75) return { key: 'strong', label: 'Strong match' }
-  if (pct >= 50) return { key: 'partial', label: 'Partial match' }
-  return { key: 'weak', label: 'Weak match' }
-}
 
 function Requirements({ title, items, tone }) {
   if (!items?.length) return null
@@ -47,7 +44,7 @@ export default function MatchPanel({ match, analysing, onAnalyse, onReanalyse })
   }
 
   const pct = Math.max(0, Math.min(100, match.match_percentage))
-  const { key, label } = band(pct)
+  const { key, label } = matchBand(pct)
 
   return (
     <>
@@ -72,6 +69,27 @@ export default function MatchPanel({ match, analysing, onAnalyse, onReanalyse })
             >
               <div className="meter-fill" data-band={key} style={{ width: `${pct}%` }} />
             </div>
+          </div>
+        </div>
+
+        <div className="match-stats">
+          <div className="match-stat">
+            <div className="match-stat-value" data-tone="met">
+              {match.requirements_met.length}
+            </div>
+            <div className="match-stat-label">skills you have</div>
+          </div>
+          <div className="match-stat">
+            <div className="match-stat-value" data-tone="missing">
+              {match.requirements_missing.length}
+            </div>
+            <div className="match-stat-label">skills required</div>
+          </div>
+          <div className="match-stat">
+            <div className="match-stat-value">
+              {match.requirements_met.length + match.requirements_missing.length}
+            </div>
+            <div className="match-stat-label">total assessed</div>
           </div>
         </div>
 

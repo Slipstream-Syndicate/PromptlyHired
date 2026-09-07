@@ -140,6 +140,10 @@ The binding constraint is no longer money, it is **rate limit**. The free tier a
 - id, user_id (FK), job_id (FK), resume_id (FK), match_percentage (0-100), requirements_met (list), requirements_missing (list), rationale, generated_at, model_used
 - Unique on (user_id, job_id, resume_id) — a new resume produces a new match, and the old one stays for comparison.
 
+**UserJob** (which user added which job)
+- id, user_id (FK), job_id (FK), added_at
+- Job rows are shared and deduplicated — two users pasting the same link get the same Job — so ownership cannot live on Job itself. Distinct from SavedJob: everything you paste lands here, only what you star lands there.
+
 **SavedJob**
 - id, user_id (FK), job_id (FK), saved_at
 
@@ -161,7 +165,9 @@ The binding constraint is no longer money, it is **rate limit**. The free tier a
    - **Apply link** to the original posting
    - Save toggle
 
-   Cards deliberately show **no match percentage** — scoring is a per-job API call, so it happens on request.
+   Cards show the **match percentage and the met/missing counts** once that job has been analysed. Those figures are read from the cached JobMatch row, so rendering a card is a database join and never an API call — a card simply shows nothing until the user asks for an analysis.
+
+   The figures shown are always those of the **currently active resume**. Uploading a new CV clears them until re-analysed, rather than showing a score that describes an older document.
 
    Two ways in: **paste a link** (fetched and parsed server-side) or **paste the text** (for sites that block fetches, and it costs no AI quota).
 
@@ -179,6 +185,8 @@ Opening a card triggers match analysis if it hasn't been computed for the curren
 2. **Requirements satisfied** — mapped to evidence in the user's resume where possible.
 3. **Requirements missing** — the gaps, stated plainly.
 4. **Generate** actions for a tailored **Resume** and **Cover Letter**.
+
+The detail view leads with three figures: the match percentage, how many required skills the candidate **has**, and how many are **missing**.
 
 ### Apply link (required everywhere a job is shown)
 

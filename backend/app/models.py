@@ -164,6 +164,35 @@ class Job(Base):
     company: Mapped[Company] = relationship(back_populates="jobs")
 
 
+class UserJob(Base):
+    """Records that this user added this job to their workspace.
+
+    Job rows are shared and deduplicated - two users pasting the same link get
+    the same Job - so ownership cannot live on Job itself. Without this, a
+    freshly pasted job would not appear on the user's Jobs page until they
+    happened to save or analyse it.
+
+    Distinct from SavedJob, which is a deliberate shortlist. Everything you
+    paste lands here; only what you star lands there.
+    """
+
+    __tablename__ = "user_jobs"
+    __table_args__ = (UniqueConstraint("user_id", "job_id", name="uq_user_job"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True, nullable=False
+    )
+
+    job: Mapped[Job] = relationship()
+
+
 class SavedJob(Base):
     """Shortlist. Job-level, no AI cost, no side effects."""
 
