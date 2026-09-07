@@ -132,3 +132,64 @@ def test_ai_disabled_without_a_key(monkeypatch):
     with pytest.raises(ai.AIUnavailable):
         ai._client()
     ai._client.cache_clear()
+
+
+# --- Transient upstream failures -----------------------------------------
+
+
+def test_overload_is_retried_then_surfaced(monkeypatch):
+    """Free-tier Flash models return 503 "high demand" regularly. That is an
+    upstream capacity spike, so it is retried rather than failed outright."""
+    attempts = {"n": 0}
+
+    class Boom(Exception):
+        pass
+
+    def always_overloaded(*a, **kw):
+        attempts["n"] += 1
+        raise Boom("503 UNAVAILABLE. This model is currently experiencing high demand.")
+
+    class FakeModels:
+        generate_content = staticmethod(always_overloaded)
+
+    monkeypatch.setattr(ai, "_client", lambda: type("C", (), {"models": FakeModels})())
+    monkeypatch.setattr(ai.time, "sleep", lambda _s: None)  # no real waiting
+
+    with pytest.raises(ai.AIError) as excinfo:
+        ai.analyze_match("resume", "Engineer", "Acme", "advert")
+
+    assert attempts["n"] == ai._TRANSIENT_RETRIES + 1
+    assert "busy" in str(excinfo.value).lower()
+
+
+def test_quota_errors_are_not_retried(monkeypatch):
+    """429 is the caller being told to back off - retrying in-request just makes
+    the user wait longer for the same answer."""
+    attempts = {"n": 0}
+
+    def rate_limited(*a, **kw):
+        attempts["n"] += 1
+        raise Exception("429 RESOURCE_EXHAUSTED quota")
+
+    class FakeModels:
+        generate_content = staticmethod(rate_limited)
+
+    monkeypatch.setattr(ai, "_client", lambda: type("C", (), {"models": FakeModels})())
+    monkeypatch.setattr(ai.time, "sleep", lambda _s: None)
+
+    with pytest.raises(ai.AIRateLimited):
+        ai.analyze_match("resume", "Engineer", "Acme", "advert")
+    assert attempts["n"] == 1
+
+
+def test_unknown_model_names_the_fix(monkeypatch):
+    def not_found(*a, **kw):
+        raise Exception("404 NOT_FOUND. This model models/nope is not found")
+
+    class FakeModels:
+        generate_content = staticmethod(not_found)
+
+    monkeypatch.setattr(ai, "_client", lambda: type("C", (), {"models": FakeModels})())
+    with pytest.raises(ai.AIError) as excinfo:
+        ai.analyze_match("resume", "Engineer", "Acme", "advert")
+    assert "doctor" in str(excinfo.value)

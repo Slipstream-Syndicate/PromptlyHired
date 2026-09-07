@@ -23,6 +23,8 @@ surfaced as retryable rather than swallowed, and every call logs its token use.
 from __future__ import annotations
 
 import logging
+import random
+import time
 from functools import lru_cache
 
 from pydantic import BaseModel, Field
@@ -30,6 +32,10 @@ from pydantic import BaseModel, Field
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# The SDK logs an automatic-function-calling advisory on every generate_content
+# call. We pass no tools, so it is irrelevant noise.
+logging.getLogger("google_genai.models").setLevel(logging.ERROR)
 
 # Delimiters for third-party text. Chosen to be implausible in a real posting.
 UNTRUSTED_OPEN = "<<<UNTRUSTED_JOB_POSTING>>>"
@@ -49,6 +55,18 @@ class AIUnavailable(AIError):
 
 class AIRateLimited(AIError):
     """Free-tier quota hit. Retryable, and worth saying so plainly."""
+
+
+# Free-tier Flash models return 503 "high demand" regularly - it is an upstream
+# capacity spike, not our fault and not the user's, so retry rather than fail.
+# 429 is NOT retried here: that is a quota signal telling the caller to back
+# off, and blocking an HTTP request for a minute is worse than saying "wait".
+_TRANSIENT_RETRIES = 3
+_BACKOFF_SECONDS = (2, 6, 15)
+
+
+def _is_transient(text: str) -> bool:
+    return "503" in text or "UNAVAILABLE" in text or "high demand" in text.lower()
 
 
 @lru_cache
@@ -162,26 +180,47 @@ def _generate(label: str, *, system: str, prompt, schema, thinking: str | None =
     if thinking:
         config.thinking_config = types.ThinkingConfig(thinking_level=thinking)
 
-    try:
-        response = _client().models.generate_content(
-            model=settings.gemini_model,
-            contents=prompt,
-            config=config,
-        )
-    except Exception as exc:  # noqa: BLE001 - the SDK raises provider-specific types
-        text = str(exc)
-        if "429" in text or "RESOURCE_EXHAUSTED" in text or "quota" in text.lower():
-            raise AIRateLimited(
-                "Free-tier quota reached. Wait a minute and try again."
-            ) from exc
-        if "404" in text and "model" in text.lower():
-            raise AIError(
-                f"Model '{settings.gemini_model}' is not available on this key. "
-                "Run `python -m app.tasks doctor` to list the models you can use, "
-                "then set GEMINI_MODEL."
-            ) from exc
-        logger.error("Gemini %s failed: %s", label, text[:400])
-        raise AIError("The AI service returned an error. Please try again.") from exc
+    last_error: Exception | None = None
+    for attempt in range(_TRANSIENT_RETRIES + 1):
+        try:
+            response = _client().models.generate_content(
+                model=settings.gemini_model,
+                contents=prompt,
+                config=config,
+            )
+            break
+        except Exception as exc:  # noqa: BLE001 - the SDK raises provider types
+            text = str(exc)
+            if "429" in text or "RESOURCE_EXHAUSTED" in text or "quota" in text.lower():
+                raise AIRateLimited(
+                    "Free-tier quota reached. Wait a minute and try again."
+                ) from exc
+            if "404" in text and "model" in text.lower():
+                raise AIError(
+                    f"Model '{settings.gemini_model}' is not available on this key. "
+                    "Run `python -m app.tasks doctor` to list the models you can use, "
+                    "then set GEMINI_MODEL."
+                ) from exc
+            if _is_transient(text) and attempt < _TRANSIENT_RETRIES:
+                # Jitter so concurrent requests do not retry in lockstep.
+                delay = _BACKOFF_SECONDS[attempt] * (1 + random.random() * 0.25)
+                logger.warning(
+                    "Gemini %s overloaded (attempt %d/%d), retrying in %.1fs",
+                    label, attempt + 1, _TRANSIENT_RETRIES, delay,
+                )
+                time.sleep(delay)
+                last_error = exc
+                continue
+            logger.error("Gemini %s failed: %s", label, text[:400])
+            if _is_transient(text):
+                raise AIError(
+                    "The AI service is busy right now. Please try again in a moment."
+                ) from exc
+            raise AIError("The AI service returned an error. Please try again.") from exc
+    else:
+        raise AIError(
+            "The AI service is busy right now. Please try again in a moment."
+        ) from last_error
 
     _log_usage(label, response)
     parsed = response.parsed

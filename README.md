@@ -56,6 +56,11 @@ npm run dev                                                    # :5173
 
 There are no other keys. There is no job-board API.
 
+`GEMINI_MODEL` defaults to `gemini-3.8-flash` — a **pinned** model, not the
+`gemini-flash-latest` alias. The alias is what every default install points at,
+and under load it returns 503 "high demand" while a pinned sibling answers
+immediately. `python -m app.tasks doctor` lists what your key can call.
+
 Check what's actually wired up:
 
 ```bash

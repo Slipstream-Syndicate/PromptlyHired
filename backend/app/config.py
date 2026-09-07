@@ -48,9 +48,11 @@ class Settings(BaseSettings):
     # --- Gemini (free tier) ---
     # Server-side only; the key never reaches the browser.
     gemini_api_key: str = ""
-    # Free tier is Flash-only. Run `python -m app.tasks doctor` to list what
-    # this key can actually call.
-    gemini_model: str = "gemini-flash-latest"
+    # A pinned model, not the "-latest" alias: that alias is shared by every
+    # default install and returns 503 "high demand" under load, while a pinned
+    # sibling answers immediately. Run `python -m app.tasks doctor` to list what
+    # this key can call, and `gemini-flash-lite-latest` is a good fallback.
+    gemini_model: str = "gemini-3.8-flash"
     # Deeper reasoning for document drafting; extraction and scoring do not
     # need it and it costs latency against a low free-tier rate limit.
     gemini_thinking_level: str = "low"

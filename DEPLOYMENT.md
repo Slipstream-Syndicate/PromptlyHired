@@ -82,6 +82,7 @@ Back in Render → your web service → **Environment**:
 | `CORS_ORIGINS` | `https://jobtrail.netlify.app` |
 | `APP_BASE_URL` | `https://jobtrail.netlify.app` |
 | `GEMINI_API_KEY` | your free Gemini key |
+| `GEMINI_MODEL` | `gemini-3.8-flash` (see note below) |
 
 The API **refuses to start** in production if `JWT_SECRET` is a default/short
 value, if `CORS_ORIGINS` is missing, wildcarded, or non-HTTPS. That is deliberate —
@@ -190,5 +191,6 @@ Then, in a browser:
 | No skill profile after upload | `GEMINI_API_KEY` unset or invalid — check `/health` and run the doctor. |
 | Match/generate return 503 | Same cause: no Gemini key on the API service. |
 | Match/generate return 429 | Free-tier rate limit. Wait a minute. |
+| Match/generate return 502 "AI service is busy" | The model is overloaded upstream. The app already retries 3x with backoff; if it persists, switch `GEMINI_MODEL` to another Flash model (`python -m app.tasks doctor` lists them). |
 | "That site blocked the request" | LinkedIn/Indeed block server fetches. Use the paste-the-text tab. |
 | Resumes vanish after a deploy | `MEDIA_STORAGE` is not `s3`. See step 6. |
