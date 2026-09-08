@@ -28,3 +28,8 @@ npm-debug.log*
 
 # Locally stored uploads (dev only)
 backend/media/
+
+# Provider credentials kept as loose notes next to the project
+R2 cloudflare details.txt
+*credentials*.txt
+*secrets*.txt

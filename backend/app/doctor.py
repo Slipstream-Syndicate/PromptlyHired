@@ -116,7 +116,7 @@ def run() -> int:
         check_media_storage(),
     ]
 
-    print(f"\nJobTrail doctor  (ENV={settings.env})")
+    print(f"\nPromptlyHired doctor  (ENV={settings.env})")
     print("=" * 72)
     for status, name, detail in results:
         print(f"  [{status}] {name:16} {detail}")

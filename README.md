@@ -1,4 +1,4 @@
-# JobTrail
+# PromptlyHired
 
 Paste a link to any job. It reads your resume, tells you how well you actually
 match that role, shows the gaps, and writes a tailored resume and cover letter

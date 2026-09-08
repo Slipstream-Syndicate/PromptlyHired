@@ -58,7 +58,7 @@ export default function InstallPrompt() {
   return (
     <div className="install-banner">
       <div className="job-main">
-        <strong>Install JobTrail</strong>
+        <strong>Install PromptlyHired</strong>
         <p className="job-company" style={{ marginTop: 2 }}>
           {deferred
             ? 'Add it to your home screen for full-screen access and notifications.'

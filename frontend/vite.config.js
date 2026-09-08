@@ -12,10 +12,10 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['apple-touch-icon.png', 'favicon-64.png'],
       manifest: {
-        name: 'JobTrail - Job Search & Application Tracker',
-        short_name: 'JobTrail',
+        name: 'PromptlyHired - Resume & Cover Letter Tailoring',
+        short_name: 'PromptlyHired',
         description:
-          'Browse job listings, follow companies, and track every application you send.',
+          'Paste a job link, see how you match it, and generate a tailored resume and cover letter.',
         start_url: '/',
         scope: '/',
         display: 'standalone',

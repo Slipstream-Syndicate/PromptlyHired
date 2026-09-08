@@ -25,8 +25,8 @@ export default function Login() {
   return (
     <div className="auth">
       <form className="auth-card" onSubmit={submit}>
-        <h1>JobTrail</h1>
-        <p className="sub">Track every application in one place.</p>
+        <h1>PromptlyHired</h1>
+        <p className="sub">Tailor your resume to any job in minutes.</p>
 
         {error && <div className="alert error">{error}</div>}
 

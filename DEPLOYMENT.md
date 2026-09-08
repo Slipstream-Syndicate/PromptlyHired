@@ -1,4 +1,4 @@
-# Deploying JobTrail
+# Deploying PromptlyHired
 
 Frontend on **Netlify**, API + Postgres + scheduled jobs on **Render**. Both have
 free tiers that cover this app. Total time: about 30 minutes, most of it waiting
@@ -14,9 +14,9 @@ Netlify and Render both deploy from a Git remote.
 
 ```bash
 git add -A
-git commit -m "JobTrail"
+git commit -m "PromptlyHired"
 git branch -M main
-git remote add origin https://github.com/<you>/jobtrail.git
+git remote add origin https://github.com/<you>/PromptlyHired.git
 git push -u origin main
 ```
 
