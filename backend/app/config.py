@@ -82,9 +82,20 @@ class Settings(BaseSettings):
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, v):
-        if isinstance(v, str):
-            return [o.strip() for o in v.split(",") if o.strip()]
-        return v
+        """Parse the comma-separated list, and normalise each origin.
+
+        CORSMiddleware compares the browser's Origin header to these by exact
+        string equality. A browser never sends a trailing slash, so a dashboard
+        value pasted as "https://site.netlify.app/" silently matches nothing and
+        blocks every request - which surfaces in the browser as an opaque
+        "NetworkError when attempting to fetch resource", with no hint that CORS
+        is the cause. Stripping it here is free and removes a whole class of
+        deployment confusion.
+        """
+        items = v.split(",") if isinstance(v, str) else v
+        if not isinstance(items, list):
+            return v
+        return [o.strip().rstrip("/") for o in items if isinstance(o, str) and o.strip()]
 
     @field_validator("database_url", mode="before")
     @classmethod
